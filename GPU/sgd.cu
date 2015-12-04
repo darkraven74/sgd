@@ -3,7 +3,21 @@
 #include <algorithm>
 #include <ctime>
 #include <set>
-//#include <thrust/device_vector.h>
+#include <thrust/device_vector.h>
+#include <thrust/host_vector.h>
+#include <thrust/copy.h>
+
+#define BLOCK_SIZE 8
+
+double get_wall_time()
+{
+    struct timeval time;
+    if (gettimeofday(&time, NULL)) {
+        //  Handle error
+        return 0;
+    }
+    return (double) time.tv_sec * 1000000 + (double) time.tv_usec;
+}
 
 sgd::sgd(std::istream &tuples_stream,
          int count_features,
@@ -165,9 +179,12 @@ void sgd::calculate(int count_iterations, int positive_ratings, int negative_rat
     float old_hr = 0;
     float new_hr = 0.00000001;
 
+    transfers = 0;
+    calc = 0;
+
 
     for (int i = 0; i < count_iterations; i++) {
-        time_t start = time(0);
+        double start = get_wall_time();
         std::cerr << "SGD Iteration: " << i << std::endl;
 
         train_random_preferences();
@@ -187,28 +204,64 @@ void sgd::calculate(int count_iterations, int positive_ratings, int negative_rat
         std::cout << std::endl;*/
 
 
-        time_t end = time(0);
-        std::cerr << "==== Iteration time : " << end - start << std::endl;
+        double end = get_wall_time();
+        std::cerr << "==== Iteration time : " << (end - start) / 1000000 << std::endl;
 
 
-        old_hr = new_hr;
+        /*old_hr = new_hr;
         new_hr = hit_rate_cpu();
         if (new_hr > old_hr) {
             _sgd_learning_rate *= 1.05;
         }
         else {
             _sgd_learning_rate *= 0.5;
-        }
+        }*/
         hr10 << new_hr << std::endl;
 
     }
+
+    std::cout << "Profiler:\n";
+    std::cout << "Transfers: " << transfers / 1000000 << std::endl;
+    std::cout << "Calc: " << calc / 1000000 << std::endl;
+
 
     hr10.close();
 
 }
 
+__global__ void update_features_gpu(int *user_ids, int *item_ids, float *preferences,
+                                    float *features_users, float *features_items, int ratings_count,
+                                    int _count_features, float _sgd_lambda, float _sgd_learning_rate)
+{
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < ratings_count) {
+        int user = user_ids[idx];
+        int item = item_ids[idx];
+
+        float prediction = 0;
+        for (int i = 0; i < _count_features; i++) {
+            prediction += (features_users[user * _count_features + i] * features_items[item * _count_features + i]);
+        }
+
+        float error = preferences[idx] - prediction;
+
+        for (int i = 0; i < _count_features; i++) {
+            float user_feature = features_users[user * _count_features + i];
+            float item_feature = features_items[item * _count_features + i];
+
+            float delta_user_feature = error * item_feature - _sgd_lambda * user_feature;
+            float delta_item_feature = error * user_feature - _sgd_lambda * item_feature;
+
+            features_users[user * _count_features + i] += (_sgd_learning_rate * delta_user_feature);
+            features_items[item * _count_features + i] += (_sgd_learning_rate * delta_item_feature);
+        }
+    }
+}
+
 void sgd::train_random_preferences()
 {
+    double start = get_wall_time();
+
     std::vector<int> small_user_id;
     std::vector<int> small_item_id;
     std::vector<float> small_preference;
@@ -233,17 +286,17 @@ void sgd::train_random_preferences()
         if (user_id_to_small[user] == -1) {
             user_id_to_small[user] = count_small_users;
             user_id_from_small.push_back(user);
-            small_features_users.insert(small_features_users.end(),
+            /*small_features_users.insert(small_features_users.end(),
                                         _features_users.begin() + user * _count_features,
-                                        _features_users.begin() + (user + 1) * _count_features);
+                                        _features_users.begin() + (user + 1) * _count_features);*/
             count_small_users++;
         }
         if (item_id_to_small[item] == -1) {
             item_id_to_small[item] = count_small_items;
             item_id_from_small.push_back(item);
-            small_features_items.insert(small_features_items.end(),
+            /*small_features_items.insert(small_features_items.end(),
                                         _features_items.begin() + item * _count_features,
-                                        _features_items.begin() + (item + 1) * _count_features);
+                                        _features_items.begin() + (item + 1) * _count_features);*/
             count_small_items++;
         }
 
@@ -261,17 +314,17 @@ void sgd::train_random_preferences()
             if (user_id_to_small[user] == -1) {
                 user_id_to_small[user] = count_small_users;
                 user_id_from_small.push_back(user);
-                small_features_users.insert(small_features_users.end(),
+                /*small_features_users.insert(small_features_users.end(),
                                             _features_users.begin() + user * _count_features,
-                                            _features_users.begin() + (user + 1) * _count_features);
+                                            _features_users.begin() + (user + 1) * _count_features);*/
                 count_small_users++;
             }
             if (item_id_to_small[item] == -1) {
                 item_id_to_small[item] = count_small_items;
                 item_id_from_small.push_back(item);
-                small_features_items.insert(small_features_items.end(),
+                /*small_features_items.insert(small_features_items.end(),
                                             _features_items.begin() + item * _count_features,
-                                            _features_items.begin() + (item + 1) * _count_features);
+                                            _features_items.begin() + (item + 1) * _count_features);*/
                 count_small_items++;
             }
 
@@ -281,29 +334,116 @@ void sgd::train_random_preferences()
         }
     }
 
+    small_features_users.resize(count_small_users * _count_features);
+    small_features_items.resize(count_small_items * _count_features);
+
+#pragma omp parallel for num_threads(omp_get_max_threads())
+    for (int i = 0; i < count_small_users; i++) {
+        int user_id = user_id_from_small[i];
+        std::copy(_features_users.begin() + user_id * _count_features,
+                  _features_users.begin() + (user_id + 1) * _count_features,
+                  small_features_users.begin() + i * _count_features);
+    }
+
+#pragma omp parallel for num_threads(omp_get_max_threads())
+    for (int i = 0; i < count_small_items; i++) {
+        int item_id = item_id_from_small[i];
+        std::copy(_features_items.begin() + item_id * _count_features,
+                  _features_items.begin() + (item_id + 1) * _count_features,
+                  small_features_items.begin() + i * _count_features);
+    }
+    double end = get_wall_time();
+    transfers += (end - start);
+    start = get_wall_time();
+
+    /*
+
+    dim3 block(BLOCK_SIZE, 1);
+    dim3 grid(1 + small_preference.size() / BLOCK_SIZE, 1);
+
+    thrust::device_vector<int> d_small_user_id(small_user_id);
+    thrust::device_vector<int> d_small_item_id(small_item_id);
+    thrust::device_vector<float> d_small_preference(small_preference);
+    thrust::device_vector<float> d_small_features_users(small_features_users);
+    thrust::device_vector<float> d_small_features_items(small_features_items);
+
+    cudaDeviceSynchronize();
+
+    double end = get_wall_time();
+    transfers += (end - start);
+    start = get_wall_time();
+
+
+
+    update_features_gpu << < grid, block >> > (thrust::raw_pointer_cast(&d_small_user_id[0]),
+        thrust::raw_pointer_cast(&d_small_item_id[0]), thrust::raw_pointer_cast(&d_small_preference[0]),
+        thrust::raw_pointer_cast(&d_small_features_users[0]), thrust::raw_pointer_cast(&d_small_features_items[0]),
+        small_preference.size(), _count_features, _sgd_lambda, _sgd_learning_rate);
+
+    cudaDeviceSynchronize();
+    end = get_wall_time();
+    calc += (end - start);
+    start = get_wall_time();
+*/
+
+
+#pragma omp parallel for num_threads(omp_get_max_threads())
     for (int i = 0; i < small_preference.size(); i++) {
         update_features_small(&small_user_id[0], &small_item_id[0], &small_preference[0],
                               &small_features_users[0], &small_features_items[0], i);
     }
 
+    end = get_wall_time();
+    calc += (end - start);
+    start = get_wall_time();
+
+#pragma omp parallel for num_threads(omp_get_max_threads())
     for (int i = 0; i < user_id_from_small.size(); i++) {
         std::copy(small_features_users.begin() + i * _count_features,
                   small_features_users.begin() + (i + 1) * _count_features,
                   _features_users.begin() + user_id_from_small[i] * _count_features);
     }
 
+#pragma omp parallel for num_threads(omp_get_max_threads())
     for (int i = 0; i < item_id_from_small.size(); i++) {
         std::copy(small_features_items.begin() + i * _count_features,
                   small_features_items.begin() + (i + 1) * _count_features,
                   _features_items.begin() + item_id_from_small[i] * _count_features);
     }
+    end = get_wall_time();
+    transfers += (end - start);
+
+/*
+
+    thrust::host_vector<float> h_small_features_users(d_small_features_users);
+    thrust::host_vector<float> h_small_features_items(d_small_features_items);
+
+#pragma omp parallel for num_threads(omp_get_max_threads())
+    for (int i = 0; i < user_id_from_small.size(); i++) {
+        thrust::copy(h_small_features_users.begin() + i * _count_features,
+                     h_small_features_users.begin() + (i + 1) * _count_features,
+                     _features_users.begin() + user_id_from_small[i] * _count_features);
+    }
+
+#pragma omp parallel for num_threads(omp_get_max_threads())
+    for (int i = 0; i < item_id_from_small.size(); i++) {
+        thrust::copy(h_small_features_items.begin() + i * _count_features,
+                     h_small_features_items.begin() + (i + 1) * _count_features,
+                     _features_items.begin() + item_id_from_small[i] * _count_features);
+    }
+
+    cudaDeviceSynchronize();
+    end = get_wall_time();
+    transfers += (end - start);
+
+    */
+
 }
 
 void sgd::update_features_small(int *user_ids, int *item_ids, float *preferences,
                                 float *features_users, float *features_items, int idx)
 {
     float error = preferences[idx] - get_prediction_small(user_ids[idx], item_ids[idx], features_users, features_items);
-
 
     for (int i = 0; i < _count_features; i++) {
         float user_feature = features_users[user_ids[idx] * _count_features + i];

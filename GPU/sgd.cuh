@@ -6,6 +6,7 @@
 #include <fstream>
 #include <sstream>
 #include <iostream>
+#include <sys/time.h>
 #include <omp.h>
 
 class sgd
@@ -137,6 +138,11 @@ private:
     likes_weights_vector _user_likes_weights_temp;
 
     std::vector<std::pair<int, int> > prefs;
+
+    double transfers;
+    double calc;
 };
+
+double get_wall_time();
 
 #endif //CPU_SGD_H

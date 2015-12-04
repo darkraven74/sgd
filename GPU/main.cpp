@@ -23,6 +23,7 @@ int main(int argc, char *argv[])
     int positive_ratings = 100000;
     int negative_ratings = 1000000;
 
+
     for (int i = 1; i < argc; i++) {
         std::string sarg = argv[i];
         if (!sarg.compare("--likes")) {
@@ -70,14 +71,12 @@ int main(int argc, char *argv[])
 
     sgd sgd_alg(in, features_size, learning_rate, lambda, alpha, csamples, likes_format);
 
-    struct timeval t1;
-    struct timeval t2;
+    double start = get_wall_time();
 
-    gettimeofday(&t1, NULL);
     sgd_alg.calculate(cit, positive_ratings, negative_ratings);
-    gettimeofday(&t2, NULL);
 
-    std::cout << "sgd calc time: " << t2.tv_sec - t1.tv_sec << std::endl;
+    double end = get_wall_time();
+    std::cout << "sgd calc time, s: " << (end - start) / 1000000 << std::endl;
 
 
     /*std::ofstream fout_users((output_file_name.append(".ufea")).c_str());
