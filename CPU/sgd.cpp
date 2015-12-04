@@ -107,17 +107,21 @@ void sgd::read_likes(std::istream &tuples_stream, int count_simples, int format)
 void sgd::generate_test_set()
 {
     int total_size = 0;
-    //for (int idx = 0; idx < 10000; idx++)
-    for (int i = 0; i < _count_users; i++) {
-        //int i = rand() % _count_users;
+    for (int idx = 0; idx < 10000;) {
+    //for (int i = 0; i < _count_users; i++) {
+        int i = rand() % _count_users;
+	if (_user_likes[i].size() < 2) {
+	    continue;
+	}
+	idx++;
         total_size += _user_likes[i].size();
         int size = _user_likes[i].size();
         for (int j = 0; j < size / 2;) {
             int id = rand() % _user_likes[i].size();
 
-            if (_user_likes_weights_temp[i][id] < 4) {
+            /*if (_user_likes_weights_temp[i][id] < 4) {
                 continue;
-            }
+            }*/
             test_set.push_back(std::make_pair(i, _user_likes[i][id]));
 
             for (unsigned int k = 0; k < _item_likes[_user_likes[i][id]].size(); k++) {
@@ -135,7 +139,7 @@ void sgd::generate_test_set()
         }
     }
 
-    std::ofstream test_ml100k("test_ml100k.txt");
+    /*std::ofstream test_ml100k("test_ml100k.txt");
     for (int i = 0; i < test_set.size(); i++) {
         int user = test_set[i].first;
         int item = test_set[i].second;
@@ -149,7 +153,7 @@ void sgd::generate_test_set()
             train_ml100k << i << "," << _user_likes[i][j] << ",6" << std::endl;
             prefs.push_back(std::make_pair(i, _user_likes[i][j]));
         }
-    }
+    }*/
 
     /*srand(34);
     int i = 0;
@@ -161,8 +165,8 @@ void sgd::generate_test_set()
         }
         train_ml100k << user << "," << item << ",0" << std::endl;
         i++;
-    }*/
-    train_ml100k.close();
+    }
+    train_ml100k.close();*/
 
 }
 
@@ -213,6 +217,10 @@ void sgd::calculate(int count_iterations)
     fill_rnd(_features_items, _count_items);
 
     std::ofstream hr10("hr10.txt");
+    
+    float old_hr = 0;
+    float new_hr = 0.00000001;
+    
 
     for (int i = 0; i < count_iterations; i++) {
         time_t start = time(0);
@@ -220,6 +228,7 @@ void sgd::calculate(int count_iterations)
 
 //        train_all_preferences();
         train_random_preferences();
+	
 
 
         /*std::cout << "users fea: " << std::endl;
@@ -238,7 +247,16 @@ void sgd::calculate(int count_iterations)
         time_t end = time(0);
         std::cerr << "==== Iteration time : " << end - start << std::endl;
 
-        hr10 << hit_rate_cpu() << std::endl;
+	
+	old_hr = new_hr;
+	new_hr = hit_rate_cpu();
+	if (new_hr > old_hr) {
+	    _sgd_learning_rate *= 1.05;
+	} else {
+	    _sgd_learning_rate *= 0.5;
+	}
+        hr10 << new_hr << std::endl;
+	
     }
 
     hr10.close();
@@ -272,34 +290,41 @@ void sgd::train_random_preferences() {
     _features_items_diff.assign(_count_items * _count_features, 0);
     _features_users_diff_count.assign(_count_users * _count_features, 0);
     _features_items_diff_count.assign(_count_items * _count_features, 0);
-//#pragma omp parallel for num_threads(omp_get_max_threads())
-    for (int i = 0; i < 99980; i++) {
-        int user = rand() % _user_likes.size();
-        int item_id = rand() % _user_likes[user].size();
-        int item = _user_likes[user][item_id];
+    
+    
+    
+    //#pragma omp parallel for num_threads(omp_get_max_threads())
+    
+    #pragma omp parallel 
+    {
+      unsigned int myseed = int(time(NULL)) * omp_get_thread_num();
+      #pragma omp for
+      for (int i = 0; i < 100000; i++) {
+	int user = rand_r(&myseed) % _user_likes.size();
+        int item_id = rand_r(&myseed) % _user_likes[user].size();
+	int item = _user_likes[user][item_id];
         float preference = _user_likes_weights[user][item_id];
         update_features(user, item, 6);
 //        update_features_avg(user, item, 6);
+      }
     }
-
-    /*srand(time(NULL));
-    std::random_shuffle(prefs.begin(), prefs.end());
-    for (int i = 0; i < 99980; i++) {
-        update_features(prefs[i].first, prefs[i].second, 6);
-    }*/
-
-    //srand(34);
-//#pragma omp parallel for num_threads(omp_get_max_threads())
-    for (int i = 0; i < 1000000; i++) {
-        int user = rand() % _user_likes.size();
-        int item = rand() % _item_likes.size();
-        if (std::find(_user_likes[user].begin(), _user_likes[user].end(), item) == _user_likes[user].end()) {
-            update_features(user, item, 0);
-//            update_features_avg(user, item, 0);
-        }
+    
+    #pragma omp parallel 
+    {
+      unsigned int myseed = int(time(NULL)) * omp_get_thread_num();
+      #pragma omp for
+      for (int i = 0; i < 1000000; i++) {
+	  int user = rand_r(&myseed) % _user_likes.size();
+	  int item = rand_r(&myseed) % _item_likes.size();
+	  if (std::find(_user_likes[user].begin(), _user_likes[user].end(), item) == _user_likes[user].end()) {
+	      update_features(user, item, 0);
+//              update_features_avg(user, item, 0);
+	  }
+      }
     }
-
-    /*for (int i = 0; i < _count_users; i++) {
+    
+    /*#pragma omp parallel for
+    for (int i = 0; i < _count_users; i++) {
         if (_features_users_diff_count[i * _count_features] != 0) {
             for (int k = 0; k < _count_features; k++) {
                 int idx = i * _count_features + k;
@@ -308,6 +333,8 @@ void sgd::train_random_preferences() {
             }
         }
     }
+    
+    #pragma omp parallel for
     for (int i = 0; i < _count_items; i++) {
         if (_features_items_diff_count[i * _count_features] != 0) {
             for (int k = 0; k < _count_features; k++) {

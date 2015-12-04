@@ -12,11 +12,12 @@ int main(int argc, char *argv[])
     std::string likes_file_name;
     int features_size = 50;
     int csamples = 0;
-    int cit = 40;
+    int cit = 20;
     int likes_format = 0;
-    float learning_rate = 0.001;
+    float learning_rate = 0.01;
 //    float learning_rate = 0.1;
-    float lambda = 0.1;
+    //float lambda = 0.1;
+    float lambda = 0.01;
 
     for (int i = 1; i < argc; i++) {
         std::string sarg = argv[i];
