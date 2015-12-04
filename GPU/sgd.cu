@@ -3,11 +3,13 @@
 #include <algorithm>
 #include <ctime>
 #include <set>
+//#include <thrust/device_vector.h>
 
 sgd::sgd(std::istream &tuples_stream,
          int count_features,
          float learning_rate,
          float lambda,
+         float alpha,
          int count_samples,
          int likes_format)
     :
@@ -15,7 +17,8 @@ sgd::sgd(std::istream &tuples_stream,
     _count_items(0),
     _count_features(count_features),
     _sgd_learning_rate(learning_rate),
-    _sgd_lambda(lambda)
+    _sgd_lambda(lambda),
+    _sgd_alpha(alpha)
 {
 
 
@@ -27,7 +30,6 @@ sgd::sgd(std::istream &tuples_stream,
 
     generate_test_set();
 
-    //getHRFromDato();
 
     _features_users.assign(_count_users * _count_features, 0);
     _features_items.assign(_count_items * _count_features, 0);
@@ -108,12 +110,12 @@ void sgd::generate_test_set()
 {
     int total_size = 0;
     for (int idx = 0; idx < 10000;) {
-    //for (int i = 0; i < _count_users; i++) {
+        //for (int i = 0; i < _count_users; i++) {
         int i = rand() % _count_users;
-	if (_user_likes[i].size() < 2) {
-	    continue;
-	}
-	idx++;
+        if (_user_likes[i].size() < 2) {
+            continue;
+        }
+        idx++;
         total_size += _user_likes[i].size();
         int size = _user_likes[i].size();
         for (int j = 0; j < size / 2;) {
@@ -138,67 +140,6 @@ void sgd::generate_test_set()
             break;
         }
     }
-
-    /*std::ofstream test_ml100k("test_ml100k.txt");
-    for (int i = 0; i < test_set.size(); i++) {
-        int user = test_set[i].first;
-        int item = test_set[i].second;
-        test_ml100k << user << "," << item << ",6" << std::endl;
-    }
-    test_ml100k.close();
-
-    std::ofstream train_ml100k("train_ml100k.txt");
-    for (int i = 0; i < _user_likes.size(); i++) {
-        for (int j = 0; j < _user_likes[i].size(); j++) {
-            train_ml100k << i << "," << _user_likes[i][j] << ",6" << std::endl;
-            prefs.push_back(std::make_pair(i, _user_likes[i][j]));
-        }
-    }*/
-
-    /*srand(34);
-    int i = 0;
-    while (i < 1000000) {
-        int user = rand() % _user_likes.size();
-        int item = rand() % _item_likes.size();
-        if (std::find(_user_likes[user].begin(), _user_likes[user].end(), item) != _user_likes[user].end()) {
-            continue;
-        }
-        train_ml100k << user << "," << item << ",0" << std::endl;
-        i++;
-    }
-    train_ml100k.close();*/
-
-}
-
-void sgd::getHRFromDato()
-{
-    std::ifstream recs_ml100k("recs_dato.csv");
-    std::string line;
-    getline(recs_ml100k, line);
-    char csv_delim = ',';
-    std::set<std::pair<int, int> > recs;
-    while (getline(recs_ml100k, line)) {
-        std::istringstream line_stream(line);
-        std::string value;
-        getline(line_stream, value, csv_delim);
-        unsigned long uid = atol(value.c_str());
-        getline(line_stream, value, csv_delim);
-        unsigned long iid = atol(value.c_str());
-        recs.insert(std::make_pair(uid, iid));
-    }
-
-    float tp = 0;
-    for (int i = 0; i < test_set.size(); i++) {
-        if (recs.count(test_set[i])) {
-            tp++;
-        }
-    }
-
-    std::cout << "*************************** HR10: " << tp / test_set.size() << std::endl;
-
-
-
-    recs_ml100k.close();
 }
 
 void sgd::fill_rnd(features_vector &in_v, int in_size)
@@ -211,24 +152,26 @@ void sgd::fill_rnd(features_vector &in_v, int in_size)
     std::cerr << "done" << std::endl;
 }
 
-void sgd::calculate(int count_iterations)
+void sgd::calculate(int count_iterations, int positive_ratings, int negative_ratings)
 {
     fill_rnd(_features_users, _count_users);
     fill_rnd(_features_items, _count_items);
 
     std::ofstream hr10("hr10.txt");
-    
+
+    _positive_ratings = positive_ratings;
+    _negative_ratings = negative_ratings;
+
     float old_hr = 0;
     float new_hr = 0.00000001;
-    
+
 
     for (int i = 0; i < count_iterations; i++) {
         time_t start = time(0);
         std::cerr << "SGD Iteration: " << i << std::endl;
 
-//        train_all_preferences();
         train_random_preferences();
-	
+
 
 
         /*std::cout << "users fea: " << std::endl;
@@ -247,106 +190,144 @@ void sgd::calculate(int count_iterations)
         time_t end = time(0);
         std::cerr << "==== Iteration time : " << end - start << std::endl;
 
-	
-	old_hr = new_hr;
-	new_hr = hit_rate_cpu();
-	if (new_hr > old_hr) {
-	    _sgd_learning_rate *= 1.05;
-	} else {
-	    _sgd_learning_rate *= 0.5;
-	}
+
+        old_hr = new_hr;
+        new_hr = hit_rate_cpu();
+        if (new_hr > old_hr) {
+            _sgd_learning_rate *= 1.05;
+        }
+        else {
+            _sgd_learning_rate *= 0.5;
+        }
         hr10 << new_hr << std::endl;
-	
+
     }
 
     hr10.close();
 
 }
 
-void sgd::train_all_preferences() {
-    for (int user = 0; user < _user_likes.size(); user++) {
-        for (int i = 0; i < _user_likes[user].size(); i++) {
-            int item = _user_likes[user][i];
-            float preference = _user_likes_weights[user][i];
-            update_features(user, item, 6);
+void sgd::train_random_preferences()
+{
+    std::vector<int> small_user_id;
+    std::vector<int> small_item_id;
+    std::vector<float> small_preference;
+    features_vector small_features_users;
+    features_vector small_features_items;
+
+    std::vector<int> user_id_to_small(_count_users, -1);
+    std::vector<int> user_id_from_small;
+    std::vector<int> item_id_to_small(_count_items, -1);
+    std::vector<int> item_id_from_small;
+
+    int count_small_users = 0;
+    int count_small_items = 0;
+
+
+    for (int i = 0; i < _positive_ratings; i++) {
+        int user = rand() % _user_likes.size();
+        int item_id = rand() % _user_likes[user].size();
+        int item = _user_likes[user][item_id];
+        float preference = 1 + _sgd_alpha * _user_likes_weights[user][item_id];
+
+        if (user_id_to_small[user] == -1) {
+            user_id_to_small[user] = count_small_users;
+            user_id_from_small.push_back(user);
+            small_features_users.insert(small_features_users.end(),
+                                        _features_users.begin() + user * _count_features,
+                                        _features_users.begin() + (user + 1) * _count_features);
+            count_small_users++;
         }
+        if (item_id_to_small[item] == -1) {
+            item_id_to_small[item] = count_small_items;
+            item_id_from_small.push_back(item);
+            small_features_items.insert(small_features_items.end(),
+                                        _features_items.begin() + item * _count_features,
+                                        _features_items.begin() + (item + 1) * _count_features);
+            count_small_items++;
+        }
+
+        small_user_id.push_back(user_id_to_small[user]);
+        small_item_id.push_back(item_id_to_small[item]);
+        small_preference.push_back(preference);
     }
 
-    srand(34);
-    int i = 0;
-    while (i < 1000000) {
+    for (int i = 0; i < _negative_ratings; i++) {
         int user = rand() % _user_likes.size();
         int item = rand() % _item_likes.size();
-        if (std::find(_user_likes[user].begin(), _user_likes[user].end(), item) != _user_likes[user].end()) {
-            continue;
+        if (std::find(_user_likes[user].begin(), _user_likes[user].end(), item) == _user_likes[user].end()) {
+            float preference = 0;
+
+            if (user_id_to_small[user] == -1) {
+                user_id_to_small[user] = count_small_users;
+                user_id_from_small.push_back(user);
+                small_features_users.insert(small_features_users.end(),
+                                            _features_users.begin() + user * _count_features,
+                                            _features_users.begin() + (user + 1) * _count_features);
+                count_small_users++;
+            }
+            if (item_id_to_small[item] == -1) {
+                item_id_to_small[item] = count_small_items;
+                item_id_from_small.push_back(item);
+                small_features_items.insert(small_features_items.end(),
+                                            _features_items.begin() + item * _count_features,
+                                            _features_items.begin() + (item + 1) * _count_features);
+                count_small_items++;
+            }
+
+            small_user_id.push_back(user_id_to_small[user]);
+            small_item_id.push_back(item_id_to_small[item]);
+            small_preference.push_back(preference);
         }
-        update_features(user, item, 0);
-        i++;
+    }
+
+    for (int i = 0; i < small_preference.size(); i++) {
+        update_features_small(&small_user_id[0], &small_item_id[0], &small_preference[0],
+                              &small_features_users[0], &small_features_items[0], i);
+    }
+
+    for (int i = 0; i < user_id_from_small.size(); i++) {
+        std::copy(small_features_users.begin() + i * _count_features,
+                  small_features_users.begin() + (i + 1) * _count_features,
+                  _features_users.begin() + user_id_from_small[i] * _count_features);
+    }
+
+    for (int i = 0; i < item_id_from_small.size(); i++) {
+        std::copy(small_features_items.begin() + i * _count_features,
+                  small_features_items.begin() + (i + 1) * _count_features,
+                  _features_items.begin() + item_id_from_small[i] * _count_features);
     }
 }
 
-void sgd::train_random_preferences() {
-    _features_users_diff.assign(_count_users * _count_features, 0);
-    _features_items_diff.assign(_count_items * _count_features, 0);
-    _features_users_diff_count.assign(_count_users * _count_features, 0);
-    _features_items_diff_count.assign(_count_items * _count_features, 0);
-    
-    
-    
-    //#pragma omp parallel for num_threads(omp_get_max_threads())
-    
-    #pragma omp parallel 
-    {
-      unsigned int myseed = int(time(NULL)) * omp_get_thread_num();
-      #pragma omp for
-      for (int i = 0; i < 100000; i++) {
-	int user = rand_r(&myseed) % _user_likes.size();
-        int item_id = rand_r(&myseed) % _user_likes[user].size();
-	int item = _user_likes[user][item_id];
-        float preference = _user_likes_weights[user][item_id];
-        update_features(user, item, 6);
-//        update_features_avg(user, item, 6);
-      }
+void sgd::update_features_small(int *user_ids, int *item_ids, float *preferences,
+                                float *features_users, float *features_items, int idx)
+{
+    float error = preferences[idx] - get_prediction_small(user_ids[idx], item_ids[idx], features_users, features_items);
+
+
+    for (int i = 0; i < _count_features; i++) {
+        float user_feature = features_users[user_ids[idx] * _count_features + i];
+        float item_feature = features_items[item_ids[idx] * _count_features + i];
+
+        float delta_user_feature = error * item_feature - _sgd_lambda * user_feature;
+        float delta_item_feature = error * user_feature - _sgd_lambda * item_feature;
+
+        features_users[user_ids[idx] * _count_features + i] += (_sgd_learning_rate * delta_user_feature);
+        features_items[item_ids[idx] * _count_features + i] += (_sgd_learning_rate * delta_item_feature);
     }
-    
-    #pragma omp parallel 
-    {
-      unsigned int myseed = int(time(NULL)) * omp_get_thread_num();
-      #pragma omp for
-      for (int i = 0; i < 1000000; i++) {
-	  int user = rand_r(&myseed) % _user_likes.size();
-	  int item = rand_r(&myseed) % _item_likes.size();
-	  if (std::find(_user_likes[user].begin(), _user_likes[user].end(), item) == _user_likes[user].end()) {
-	      update_features(user, item, 0);
-//              update_features_avg(user, item, 0);
-	  }
-      }
-    }
-    
-    /*#pragma omp parallel for
-    for (int i = 0; i < _count_users; i++) {
-        if (_features_users_diff_count[i * _count_features] != 0) {
-            for (int k = 0; k < _count_features; k++) {
-                int idx = i * _count_features + k;
-                _features_users[idx] +=
-                    ((_features_users_diff[idx]) / (_features_users_diff_count[idx]));
-            }
-        }
-    }
-    
-    #pragma omp parallel for
-    for (int i = 0; i < _count_items; i++) {
-        if (_features_items_diff_count[i * _count_features] != 0) {
-            for (int k = 0; k < _count_features; k++) {
-                int idx = i * _count_features + k;
-                _features_items[idx] +=
-                    ((_features_items_diff[idx]) / (_features_items_diff_count[idx]));
-            }
-        }
-    }*/
 }
 
-void sgd::update_features(int user, int item, float preference) {
+float sgd::get_prediction_small(int user, int item, float *features_users, float *features_items)
+{
+    float ans = 0;
+    for (int i = 0; i < _count_features; i++) {
+        ans += (features_users[user * _count_features + i] * features_items[item * _count_features + i]);
+    }
+    return ans;
+}
+
+void sgd::update_features(int user, int item, float preference)
+{
     float error = preference - get_prediction(user, item);
 
 
@@ -362,35 +343,14 @@ void sgd::update_features(int user, int item, float preference) {
     }
 }
 
-void sgd::update_features_avg(int user, int item, float preference) {
-    float error = preference - get_prediction(user, item);
-
-
-    for (int i = 0; i < _count_features; i++) {
-        float user_feature = _features_users[user * _count_features + i];
-        float item_feature = _features_items[item * _count_features + i];
-
-        float delta_user_feature = error * item_feature - _sgd_lambda * user_feature;
-        float delta_item_feature = error * user_feature - _sgd_lambda * item_feature;
-
-        _features_users_diff[user * _count_features + i] += (_sgd_learning_rate * delta_user_feature);
-        _features_items_diff[item * _count_features + i] += (_sgd_learning_rate * delta_item_feature);
-
-        _features_users_diff_count[user * _count_features + i]++;
-        _features_items_diff_count[item * _count_features + i]++;
-
-    }
-}
-
-float sgd::get_prediction(int user, int item) {
+float sgd::get_prediction(int user, int item)
+{
     float ans = 0;
     for (int i = 0; i < _count_features; i++) {
         ans += (_features_users[user * _count_features + i] * _features_items[item * _count_features + i]);
     }
     return ans;
 }
-
-
 
 float sgd::hit_rate_cpu()
 {

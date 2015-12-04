@@ -1,9 +1,8 @@
 #include <string>
 
-#include <cstdlib>
 #include <sys/time.h>
 #include <iostream>
-
+#include <cstdlib>
 #include "sgd.cuh"
 
 int main(int argc, char *argv[])
@@ -18,6 +17,11 @@ int main(int argc, char *argv[])
 //    float learning_rate = 0.1;
     //float lambda = 0.1;
     float lambda = 0.01;
+    float alpha = 5;
+
+
+    int positive_ratings = 100000;
+    int negative_ratings = 1000000;
 
     for (int i = 1; i < argc; i++) {
         std::string sarg = argv[i];
@@ -46,6 +50,14 @@ int main(int argc, char *argv[])
             i++;
             likes_format = atoi(argv[i]);
         }
+        else if (!sarg.compare("--positive")) {
+            i++;
+            positive_ratings = atoi(argv[i]);
+        }
+        else if (!sarg.compare("--negative")) {
+            i++;
+            negative_ratings = atoi(argv[i]);
+        }
     }
 
     std::ifstream f_stream(likes_file_name.c_str());
@@ -56,13 +68,13 @@ int main(int argc, char *argv[])
     std::cerr << " Input file format -  " << likes_format << std::endl;
 
 
-    sgd sgd_alg(in, features_size, learning_rate, lambda, csamples, likes_format);
+    sgd sgd_alg(in, features_size, learning_rate, lambda, alpha, csamples, likes_format);
 
     struct timeval t1;
     struct timeval t2;
 
     gettimeofday(&t1, NULL);
-    sgd_alg.calculate(cit);
+    sgd_alg.calculate(cit, positive_ratings, negative_ratings);
     gettimeofday(&t2, NULL);
 
     std::cout << "sgd calc time: " << t2.tv_sec - t1.tv_sec << std::endl;

@@ -33,8 +33,10 @@ public:
         int count_features,
         float learning_rate,
         float lambda,
+        float alpha,
         int count_samples,
         int likes_format);
+
 
     virtual ~sgd();
 
@@ -43,7 +45,7 @@ public:
     /// in
     /// count_iterations - count iterations
     ///
-    virtual void calculate(int count_iterations);
+    virtual void calculate(int count_iterations, int positive_ratings, int negative_ratings);
 
     virtual float hit_rate_cpu();
 
@@ -85,8 +87,6 @@ protected:
     ///
     void fill_rnd(features_vector &in_v, int in_size);
 
-    void train_all_preferences();
-
     void train_random_preferences();
 
     void update_features(int user, int item, float preference);
@@ -94,6 +94,11 @@ protected:
     void update_features_avg(int user, int item, float preference);
 
     float get_prediction(int user, int item);
+
+    void update_features_small(int* user_ids, int* item_ids, float* preferences,
+                                    float* features_users, float* features_items, int idx);
+
+    float get_prediction_small(int user, int item, float* features_users, float* features_items);
 
     void generate_test_set();
 
@@ -110,13 +115,6 @@ private:
 
     int _count_features;
 
-    features_vector _features_users_diff;
-    features_vector _features_items_diff;
-
-
-    std::vector<int> _features_users_diff_count;
-    std::vector<int> _features_items_diff_count;
-
     ///
     /// Internal data
     ///
@@ -129,7 +127,10 @@ private:
 
     float _sgd_learning_rate;
     float _sgd_lambda;
+    float _sgd_alpha;
 
+    int _positive_ratings;
+    int _negative_ratings;
 
 
     std::vector<std::pair<int, int> > test_set;
