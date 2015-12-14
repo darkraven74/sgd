@@ -203,19 +203,20 @@ void sgd::calculate(int count_iterations, int positive_ratings, int negative_rat
         }
         std::cout << std::endl;*/
 
-
+        cudaDeviceSynchronize();
         double end = get_wall_time();
+
         std::cerr << "==== Iteration time : " << (end - start) / 1000000 << std::endl;
 
 
-        /*old_hr = new_hr;
+        old_hr = new_hr;
         new_hr = hit_rate_cpu();
         if (new_hr > old_hr) {
             _sgd_learning_rate *= 1.05;
         }
         else {
             _sgd_learning_rate *= 0.5;
-        }*/
+        }
         hr10 << new_hr << std::endl;
 
     }
@@ -262,182 +263,105 @@ void sgd::train_random_preferences()
 {
     double start = get_wall_time();
 
-    std::vector<int> small_user_id;
-    std::vector<int> small_item_id;
-    std::vector<float> small_preference;
-    features_vector small_features_users;
-    features_vector small_features_items;
-
-    std::vector<int> user_id_to_small(_count_users, -1);
-    std::vector<int> user_id_from_small;
-    std::vector<int> item_id_to_small(_count_items, -1);
-    std::vector<int> item_id_from_small;
-
-    int count_small_users = 0;
-    int count_small_items = 0;
-
-
-    for (int i = 0; i < _positive_ratings; i++) {
-        int user = rand() % _user_likes.size();
-        int item_id = rand() % _user_likes[user].size();
-        int item = _user_likes[user][item_id];
-        float preference = 1 + _sgd_alpha * _user_likes_weights[user][item_id];
-
-        if (user_id_to_small[user] == -1) {
-            user_id_to_small[user] = count_small_users;
-            user_id_from_small.push_back(user);
-            /*small_features_users.insert(small_features_users.end(),
-                                        _features_users.begin() + user * _count_features,
-                                        _features_users.begin() + (user + 1) * _count_features);*/
-            count_small_users++;
-        }
-        if (item_id_to_small[item] == -1) {
-            item_id_to_small[item] = count_small_items;
-            item_id_from_small.push_back(item);
-            /*small_features_items.insert(small_features_items.end(),
-                                        _features_items.begin() + item * _count_features,
-                                        _features_items.begin() + (item + 1) * _count_features);*/
-            count_small_items++;
-        }
-
-        small_user_id.push_back(user_id_to_small[user]);
-        small_item_id.push_back(item_id_to_small[item]);
-        small_preference.push_back(preference);
-    }
-
-    for (int i = 0; i < _negative_ratings; i++) {
-        int user = rand() % _user_likes.size();
-        int item = rand() % _item_likes.size();
-        if (std::find(_user_likes[user].begin(), _user_likes[user].end(), item) == _user_likes[user].end()) {
-            float preference = 0;
-
-            if (user_id_to_small[user] == -1) {
-                user_id_to_small[user] = count_small_users;
-                user_id_from_small.push_back(user);
-                /*small_features_users.insert(small_features_users.end(),
-                                            _features_users.begin() + user * _count_features,
-                                            _features_users.begin() + (user + 1) * _count_features);*/
-                count_small_users++;
-            }
-            if (item_id_to_small[item] == -1) {
-                item_id_to_small[item] = count_small_items;
-                item_id_from_small.push_back(item);
-                /*small_features_items.insert(small_features_items.end(),
-                                            _features_items.begin() + item * _count_features,
-                                            _features_items.begin() + (item + 1) * _count_features);*/
-                count_small_items++;
-            }
-
-            small_user_id.push_back(user_id_to_small[user]);
-            small_item_id.push_back(item_id_to_small[item]);
-            small_preference.push_back(preference);
-        }
-    }
-
-    small_features_users.resize(count_small_users * _count_features);
-    small_features_items.resize(count_small_items * _count_features);
-
-#pragma omp parallel for num_threads(omp_get_max_threads())
-    for (int i = 0; i < count_small_users; i++) {
-        int user_id = user_id_from_small[i];
-        std::copy(_features_users.begin() + user_id * _count_features,
-                  _features_users.begin() + (user_id + 1) * _count_features,
-                  small_features_users.begin() + i * _count_features);
-    }
-
-#pragma omp parallel for num_threads(omp_get_max_threads())
-    for (int i = 0; i < count_small_items; i++) {
-        int item_id = item_id_from_small[i];
-        std::copy(_features_items.begin() + item_id * _count_features,
-                  _features_items.begin() + (item_id + 1) * _count_features,
-                  small_features_items.begin() + i * _count_features);
-    }
-    /*double end = get_wall_time();
-    transfers += (end - start);
-    start = get_wall_time();*/
-
-
-
-    dim3 block(BLOCK_SIZE, 1);
-    dim3 grid(1 + small_preference.size() / BLOCK_SIZE, 1);
-
-    thrust::device_vector<int> d_small_user_id(small_user_id);
-    thrust::device_vector<int> d_small_item_id(small_item_id);
-    thrust::device_vector<float> d_small_preference(small_preference);
-    thrust::device_vector<float> d_small_features_users(small_features_users);
-    thrust::device_vector<float> d_small_features_items(small_features_items);
-
+    thrust::device_vector<float> d_features_items(_features_items);
+    cudaDeviceSynchronize();
+    size_t cuda_free_mem = 0;
+    size_t cuda_total_mem = 0;
+    cudaMemGetInfo(&cuda_free_mem, &cuda_total_mem);
     cudaDeviceSynchronize();
 
     double end = get_wall_time();
     transfers += (end - start);
+
+    int cur_user_start = 0;
+
+    while (cur_user_start < _count_users) {
+        start = get_wall_time();
+
+        int user_left_size = _count_users - cur_user_start;
+
+        int count_users_current = (int) cuda_free_mem / ((_count_features + 3) * 4);
+        count_users_current = count_users_current > user_left_size ? user_left_size : count_users_current;
+//        count_users_current = 20000;
+
+        thrust::device_vector<float> d_features_users(_features_users.begin() + cur_user_start * _count_features,
+                                                      _features_users.begin()
+                                                          + (cur_user_start + count_users_current) * _count_features);
+
+        dim3 block(BLOCK_SIZE, 1);
+        dim3 grid(1 + count_users_current / BLOCK_SIZE, 1);
+
+        cudaDeviceSynchronize();
+        end = get_wall_time();
+        transfers += (end - start);
+
+
+        int batch_iter_count = 1;
+        for (int i = 0; i < batch_iter_count; i++) {
+            start = get_wall_time();
+
+            std::vector<int> small_user_id;
+            std::vector<int> small_item_id;
+            std::vector<float> small_preference;
+            for (int j = 0; j < count_users_current; j++) {
+                int user = cur_user_start + j;
+                int is_positive_rating = rand() % 2;
+                if (is_positive_rating) {
+                    int item_id = rand() % _user_likes[user].size();
+                    int item = _user_likes[user][item_id];
+                    small_item_id.push_back(item);
+                    small_preference.push_back(1 + _sgd_alpha * _user_likes_weights[user][item_id]);
+                }
+                else {
+                    int item = rand() % _item_likes.size();
+                    small_item_id.push_back(item);
+                    std::vector<int>::iterator it = std::find(_user_likes[user].begin(), _user_likes[user].end(), item);
+                    if (it == _user_likes[user].end()) {
+                        small_preference.push_back(0);
+                    }
+                    else {
+                        int item_id = std::distance(_user_likes[user].begin(), it);
+                        small_preference.push_back(1 + _sgd_alpha * _user_likes_weights[user][item_id]);
+                    }
+                }
+                small_user_id.push_back(user);
+            }
+            thrust::device_vector<int> d_small_user_id(small_user_id);
+            thrust::device_vector<int> d_small_item_id(small_item_id);
+            thrust::device_vector<float> d_small_preference(small_preference);
+
+            cudaDeviceSynchronize();
+            end = get_wall_time();
+            transfers += (end - start);
+
+            start = get_wall_time();
+
+
+            update_features_gpu << < grid, block >> > (thrust::raw_pointer_cast(&d_small_user_id[0]),
+                thrust::raw_pointer_cast(&d_small_item_id[0]), thrust::raw_pointer_cast(&d_small_preference[0]),
+                thrust::raw_pointer_cast(&d_features_users[0]), thrust::raw_pointer_cast(&d_features_items[0]),
+                small_preference.size(), _count_features, _sgd_lambda, _sgd_learning_rate);
+
+            cudaDeviceSynchronize();
+            end = get_wall_time();
+            calc += (end - start);
+        }
+        start = get_wall_time();
+
+        thrust::copy(d_features_users.begin(), d_features_users.end(),
+                     _features_users.begin() + cur_user_start * _count_features);
+        cudaDeviceSynchronize();
+        end = get_wall_time();
+        transfers += (end - start);
+        cur_user_start += count_users_current;
+    }
+
     start = get_wall_time();
 
-
-
-    update_features_gpu << < grid, block >> > (thrust::raw_pointer_cast(&d_small_user_id[0]),
-        thrust::raw_pointer_cast(&d_small_item_id[0]), thrust::raw_pointer_cast(&d_small_preference[0]),
-        thrust::raw_pointer_cast(&d_small_features_users[0]), thrust::raw_pointer_cast(&d_small_features_items[0]),
-        small_preference.size(), _count_features, _sgd_lambda, _sgd_learning_rate);
-
+    thrust::copy(d_features_items.begin(), d_features_items.end(), _features_items.begin());
     cudaDeviceSynchronize();
     end = get_wall_time();
-    calc += (end - start);
-    start = get_wall_time();
-
-
-/*
-#pragma omp parallel for num_threads(omp_get_max_threads())
-    for (int i = 0; i < small_preference.size(); i++) {
-        update_features_small(&small_user_id[0], &small_item_id[0], &small_preference[0],
-                              &small_features_users[0], &small_features_items[0], i);
-    }
-
-    end = get_wall_time();
-    calc += (end - start);
-    start = get_wall_time();
-
-#pragma omp parallel for num_threads(omp_get_max_threads())
-    for (int i = 0; i < user_id_from_small.size(); i++) {
-        std::copy(small_features_users.begin() + i * _count_features,
-                  small_features_users.begin() + (i + 1) * _count_features,
-                  _features_users.begin() + user_id_from_small[i] * _count_features);
-    }
-
-#pragma omp parallel for num_threads(omp_get_max_threads())
-    for (int i = 0; i < item_id_from_small.size(); i++) {
-        std::copy(small_features_items.begin() + i * _count_features,
-                  small_features_items.begin() + (i + 1) * _count_features,
-                  _features_items.begin() + item_id_from_small[i] * _count_features);
-    }
-    end = get_wall_time();
     transfers += (end - start);
-*/
-
-
-    thrust::host_vector<float> h_small_features_users(d_small_features_users);
-    thrust::host_vector<float> h_small_features_items(d_small_features_items);
-
-#pragma omp parallel for num_threads(omp_get_max_threads())
-    for (int i = 0; i < user_id_from_small.size(); i++) {
-        thrust::copy(h_small_features_users.begin() + i * _count_features,
-                     h_small_features_users.begin() + (i + 1) * _count_features,
-                     _features_users.begin() + user_id_from_small[i] * _count_features);
-    }
-
-#pragma omp parallel for num_threads(omp_get_max_threads())
-    for (int i = 0; i < item_id_from_small.size(); i++) {
-        thrust::copy(h_small_features_items.begin() + i * _count_features,
-                     h_small_features_items.begin() + (i + 1) * _count_features,
-                     _features_items.begin() + item_id_from_small[i] * _count_features);
-    }
-
-    cudaDeviceSynchronize();
-    end = get_wall_time();
-    transfers += (end - start);
-
-
-
 }
 
 void sgd::update_features_small(int *user_ids, int *item_ids, float *preferences,
