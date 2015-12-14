@@ -235,25 +235,25 @@ __global__ void update_features_gpu(int *user_ids, int *item_ids, float *prefere
 {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx < ratings_count) {
-        int user = user_ids[idx];
-        int item = item_ids[idx];
+        int user_mul_feat = user_ids[idx] * _count_features;
+        int item_mul_feat = item_ids[idx] * _count_features;
 
         float prediction = 0;
         for (int i = 0; i < _count_features; i++) {
-            prediction += (features_users[user * _count_features + i] * features_items[item * _count_features + i]);
+            prediction += (features_users[user_mul_feat + i] * features_items[item_mul_feat + i]);
         }
 
         float error = preferences[idx] - prediction;
 
         for (int i = 0; i < _count_features; i++) {
-            float user_feature = features_users[user * _count_features + i];
-            float item_feature = features_items[item * _count_features + i];
+            float user_feature = features_users[user_mul_feat + i];
+            float item_feature = features_items[item_mul_feat + i];
 
             float delta_user_feature = error * item_feature - _sgd_lambda * user_feature;
             float delta_item_feature = error * user_feature - _sgd_lambda * item_feature;
 
-            features_users[user * _count_features + i] += (_sgd_learning_rate * delta_user_feature);
-            features_items[item * _count_features + i] += (_sgd_learning_rate * delta_item_feature);
+            features_users[user_mul_feat + i] = user_feature + (_sgd_learning_rate * delta_user_feature);
+            features_items[item_mul_feat + i] = item_feature + (_sgd_learning_rate * delta_item_feature);
         }
     }
 }
@@ -352,11 +352,11 @@ void sgd::train_random_preferences()
                   _features_items.begin() + (item_id + 1) * _count_features,
                   small_features_items.begin() + i * _count_features);
     }
-    double end = get_wall_time();
+    /*double end = get_wall_time();
     transfers += (end - start);
-    start = get_wall_time();
+    start = get_wall_time();*/
 
-    /*
+
 
     dim3 block(BLOCK_SIZE, 1);
     dim3 grid(1 + small_preference.size() / BLOCK_SIZE, 1);
@@ -384,9 +384,9 @@ void sgd::train_random_preferences()
     end = get_wall_time();
     calc += (end - start);
     start = get_wall_time();
-*/
 
 
+/*
 #pragma omp parallel for num_threads(omp_get_max_threads())
     for (int i = 0; i < small_preference.size(); i++) {
         update_features_small(&small_user_id[0], &small_item_id[0], &small_preference[0],
@@ -412,8 +412,8 @@ void sgd::train_random_preferences()
     }
     end = get_wall_time();
     transfers += (end - start);
+*/
 
-/*
 
     thrust::host_vector<float> h_small_features_users(d_small_features_users);
     thrust::host_vector<float> h_small_features_items(d_small_features_items);
@@ -436,7 +436,7 @@ void sgd::train_random_preferences()
     end = get_wall_time();
     transfers += (end - start);
 
-    */
+
 
 }
 
