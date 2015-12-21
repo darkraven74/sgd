@@ -415,7 +415,7 @@ __global__ void update_features_gpu_local_array(int *user_ids, int *item_ids, fl
     }
 }
 
-__global__ void update_features_2d_gpu(int *user_ids, int *item_ids, float *preferences,
+__global__ void update_features_2d_gpu(int user_offset, int *item_ids, float *preferences,
                                        float *features_users, float *features_items, int ratings_count,
                                        int _count_features, float _sgd_lambda, float _sgd_learning_rate)
 {
@@ -423,7 +423,7 @@ __global__ void update_features_2d_gpu(int *user_ids, int *item_ids, float *pref
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     int feature_idx = blockIdx.y * blockDim.y + threadIdx.y;
     if (idx < ratings_count && feature_idx < _count_features) {
-        int user_mul_feat = user_ids[idx] * _count_features;
+        int user_mul_feat = (user_offset + idx) * _count_features;
         int item_mul_feat = item_ids[idx] * _count_features;
 
         if (threadIdx.y == 0) {
@@ -500,7 +500,6 @@ void sgd::train_random_preferences()
         for (int i = 0; i < batch_iter_count; i++) {
             start = get_wall_time();
 
-            std::vector<int> small_user_id;
             std::vector<int> small_item_id;
             std::vector<float> small_preference;
             for (int j = 0; j < count_users_current; j++) {
@@ -524,9 +523,7 @@ void sgd::train_random_preferences()
                         small_preference.push_back(1 + _sgd_alpha * _user_likes_weights[user][item_id]);
                     }
                 }
-                small_user_id.push_back(user);
             }
-            thrust::device_vector<int> d_small_user_id(small_user_id);
             thrust::device_vector<int> d_small_item_id(small_item_id);
             thrust::device_vector<float> d_small_preference(small_preference);
 
@@ -557,7 +554,7 @@ void sgd::train_random_preferences()
                 thrust::raw_pointer_cast(&d_features_users[0]), thrust::raw_pointer_cast(&d_features_items[0]),
                 small_preference.size(), _count_features, _sgd_lambda, _sgd_learning_rate);*/
 
-            update_features_2d_gpu << < grid_2d, block_2d >> > (thrust::raw_pointer_cast(&d_small_user_id[0]),
+            update_features_2d_gpu << < grid_2d, block_2d >> > (cur_user_start,
                 thrust::raw_pointer_cast(&d_small_item_id[0]), thrust::raw_pointer_cast(&d_small_preference[0]),
                 thrust::raw_pointer_cast(&d_features_users[0]), thrust::raw_pointer_cast(&d_features_items[0]),
                 small_preference.size(), _count_features, _sgd_lambda, _sgd_learning_rate);
