@@ -7,7 +7,7 @@
 #include <thrust/host_vector.h>
 #include <thrust/copy.h>
 
-#define BLOCK_SIZE 8
+#define BLOCK_SIZE 2
 
 double get_wall_time()
 {
@@ -231,8 +231,8 @@ void sgd::calculate(int count_iterations, int positive_ratings, int negative_rat
 }
 
 __global__ void calc_error_gpu(int *user_ids, int *item_ids, float *preferences,
-                                    float *features_users, float *features_items, int ratings_count,
-                                    int _count_features, float* errors)
+                               float *features_users, float *features_items, int ratings_count,
+                               int _count_features, float *errors)
 {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx < ratings_count) {
@@ -243,13 +243,22 @@ __global__ void calc_error_gpu(int *user_ids, int *item_ids, float *preferences,
         for (int i = 0; i < _count_features; i++) {
             prediction += (features_users[user_mul_feat + i] * features_items[item_mul_feat + i]);
         }
-        errors[idx] = preferences[idx] - prediction;
+        float error = preferences[idx] - prediction;
+
+        errors[idx] = error;
+
     }
 }
 
-__global__ void update_features_part_gpu(int *user_ids, int *item_ids,
-                                    float *features_users, float *features_items, int ratings_count,
-                                    int _count_features, float _sgd_lambda, float _sgd_learning_rate, float* errors)
+__global__ void update_features_part_gpu(int *user_ids,
+                                         int *item_ids,
+                                         float *features_users,
+                                         float *features_items,
+                                         int ratings_count,
+                                         int _count_features,
+                                         float _sgd_lambda,
+                                         float _sgd_learning_rate,
+                                         float *errors)
 {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx < ratings_count) {
@@ -268,6 +277,35 @@ __global__ void update_features_part_gpu(int *user_ids, int *item_ids,
             features_users[user_mul_feat + i] = user_feature + (_sgd_learning_rate * delta_user_feature);
             features_items[item_mul_feat + i] = item_feature + (_sgd_learning_rate * delta_item_feature);
         }
+    }
+}
+
+__global__ void update_features_2d_part_gpu(int *user_ids,
+                                            int *item_ids,
+                                            float *features_users,
+                                            float *features_items,
+                                            int ratings_count,
+                                            int _count_features,
+                                            float _sgd_lambda,
+                                            float _sgd_learning_rate,
+                                            float *errors)
+{
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    int feature_idx = blockIdx.y * blockDim.y + threadIdx.y;
+    if (idx < ratings_count && feature_idx < _count_features) {
+        int user_mul_feat = user_ids[idx] * _count_features + feature_idx;
+        int item_mul_feat = item_ids[idx] * _count_features + feature_idx;
+
+        float error = errors[idx];
+
+        float user_feature = features_users[user_mul_feat];
+        float item_feature = features_items[item_mul_feat];
+
+        float delta_user_feature = error * item_feature - _sgd_lambda * user_feature;
+        float delta_item_feature = error * user_feature - _sgd_lambda * item_feature;
+
+        features_users[user_mul_feat] = user_feature + (_sgd_learning_rate * delta_user_feature);
+        features_items[item_mul_feat] = item_feature + (_sgd_learning_rate * delta_item_feature);
     }
 }
 
@@ -297,6 +335,118 @@ __global__ void update_features_gpu(int *user_ids, int *item_ids, float *prefere
             features_users[user_mul_feat + i] = user_feature + (_sgd_learning_rate * delta_user_feature);
             features_items[item_mul_feat + i] = item_feature + (_sgd_learning_rate * delta_item_feature);
         }
+    }
+}
+
+__global__ void update_features_gpu_test(int *user_ids, int *item_ids, float *preferences,
+                                         float *features_users, float *features_items, int ratings_count,
+                                         int _count_features, float _sgd_lambda, float _sgd_learning_rate)
+{
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < ratings_count) {
+        int user_mul_feat = user_ids[idx] * _count_features;
+        int item_mul_feat = item_ids[idx] * _count_features;
+
+        float prediction = 0;
+        for (int i = 0; i < _count_features; i++) {
+            prediction += (features_users[user_mul_feat + i] * features_items[item_mul_feat + i]);
+        }
+
+        float error = preferences[idx] - prediction;
+
+        for (int i = 0; i < _count_features; i++) {
+            float user_feature = features_users[user_mul_feat + i];
+            float item_feature = features_items[item_mul_feat + i];
+
+            float delta_user_feature = error * item_feature - _sgd_lambda * user_feature;
+
+            features_users[user_mul_feat + i] = user_feature + (_sgd_learning_rate * delta_user_feature);
+        }
+
+        for (int i = 0; i < _count_features; i++) {
+            float user_feature = features_users[user_mul_feat + i];
+            float item_feature = features_items[item_mul_feat + i];
+
+            float delta_item_feature = error * user_feature - _sgd_lambda * item_feature;
+
+            features_items[item_mul_feat + i] = item_feature + (_sgd_learning_rate * delta_item_feature);
+        }
+    }
+}
+
+__global__ void update_features_gpu_local_array(int *user_ids, int *item_ids, float *preferences,
+                                                float *features_users, float *features_items, int ratings_count,
+                                                int _count_features, float _sgd_lambda, float _sgd_learning_rate)
+{
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    float local_features[100]; // users .... items
+    if (idx < ratings_count) {
+        int _count_features_local = _count_features;
+        int user_mul_feat = user_ids[idx] * _count_features_local;
+        int item_mul_feat = item_ids[idx] * _count_features_local;
+
+        for (int i = 0; i < _count_features_local; i++) {
+            local_features[i] = features_users[user_mul_feat + i];
+            local_features[_count_features_local + i] = features_items[item_mul_feat + i];
+        }
+
+        float prediction = 0;
+        for (int i = 0; i < _count_features_local; i++) {
+            prediction += (local_features[i] * local_features[_count_features_local + i]);
+        }
+
+        float error = preferences[idx] - prediction;
+
+        for (int i = 0; i < _count_features_local; i++) {
+            float user_feature = local_features[i];
+            float item_feature = local_features[_count_features_local + i];
+
+            float delta_user_feature = error * item_feature - _sgd_lambda * user_feature;
+            float delta_item_feature = error * user_feature - _sgd_lambda * item_feature;
+
+            local_features[i] = user_feature + (_sgd_learning_rate * delta_user_feature);
+            local_features[_count_features_local + i] = item_feature + (_sgd_learning_rate * delta_item_feature);
+        }
+
+        for (int i = 0; i < _count_features_local; i++) {
+            features_users[user_mul_feat + i] = local_features[i];
+            features_items[item_mul_feat + i] = local_features[_count_features_local + i];
+        }
+    }
+}
+
+__global__ void update_features_2d_gpu(int *user_ids, int *item_ids, float *preferences,
+                                       float *features_users, float *features_items, int ratings_count,
+                                       int _count_features, float _sgd_lambda, float _sgd_learning_rate)
+{
+    __shared__ float err[BLOCK_SIZE];
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    int feature_idx = blockIdx.y * blockDim.y + threadIdx.y;
+    if (idx < ratings_count && feature_idx < _count_features) {
+        int user_mul_feat = user_ids[idx] * _count_features;
+        int item_mul_feat = item_ids[idx] * _count_features;
+
+        if (threadIdx.y == 0) {
+            float prediction = 0;
+            for (int i = 0; i < _count_features; i++) {
+                prediction += (features_users[user_mul_feat + i] * features_items[item_mul_feat + i]);
+            }
+            err[threadIdx.x] = preferences[idx] - prediction;
+        }
+
+        __syncthreads();
+
+        float error = err[threadIdx.x];
+
+
+        float user_feature = features_users[user_mul_feat + feature_idx];
+        float item_feature = features_items[item_mul_feat + feature_idx];
+
+        float delta_user_feature = error * item_feature - _sgd_lambda * user_feature;
+        float delta_item_feature = error * user_feature - _sgd_lambda * item_feature;
+
+        features_users[user_mul_feat + feature_idx] = user_feature + (_sgd_learning_rate * delta_user_feature);
+        features_items[item_mul_feat + feature_idx] = item_feature + (_sgd_learning_rate * delta_item_feature);
     }
 }
 
@@ -333,11 +483,13 @@ void sgd::train_random_preferences()
                                                 _features_users.begin()
                                                     + (cur_user_start + count_users_current) * _count_features);
 
-
-        thrust::device_vector<float> d_errors(count_users_current);
+//        thrust::device_vector<float> d_errors(count_users_current, 0);
 
         dim3 block(BLOCK_SIZE, 1);
         dim3 grid(1 + count_users_current / BLOCK_SIZE, 1);
+
+        dim3 block_2d(BLOCK_SIZE, 64);
+        dim3 grid_2d(1 + count_users_current / BLOCK_SIZE, 1 + _count_features / 64);
 
         cudaDeviceSynchronize();
         end = get_wall_time();
@@ -385,23 +537,30 @@ void sgd::train_random_preferences()
             start = get_wall_time();
 
 
-            calc_error_gpu << < grid, block >> > (thrust::raw_pointer_cast(&d_small_user_id[0]),
+
+            /*calc_error_gpu << < grid, block >> > (thrust::raw_pointer_cast(&d_small_user_id[0]),
                 thrust::raw_pointer_cast(&d_small_item_id[0]), thrust::raw_pointer_cast(&d_small_preference[0]),
                 thrust::raw_pointer_cast(&d_features_users[0]), thrust::raw_pointer_cast(&d_features_items[0]),
                 small_preference.size(), _count_features, thrust::raw_pointer_cast(&d_errors[0]));
 
             cudaDeviceSynchronize();
 
+
             update_features_part_gpu << < grid, block >> > (thrust::raw_pointer_cast(&d_small_user_id[0]),
                 thrust::raw_pointer_cast(&d_small_item_id[0]),
                 thrust::raw_pointer_cast(&d_features_users[0]), thrust::raw_pointer_cast(&d_features_items[0]),
                 small_preference.size(), _count_features, _sgd_lambda, _sgd_learning_rate,
-                thrust::raw_pointer_cast(&d_errors[0]));
+                thrust::raw_pointer_cast(&d_errors[0]));*/
 
-            /*update_features_gpu << < grid, block >> > (thrust::raw_pointer_cast(&d_small_user_id[0]),
+            /*update_features_gpu_local_array << < grid, block >> > (thrust::raw_pointer_cast(&d_small_user_id[0]),
                 thrust::raw_pointer_cast(&d_small_item_id[0]), thrust::raw_pointer_cast(&d_small_preference[0]),
                 thrust::raw_pointer_cast(&d_features_users[0]), thrust::raw_pointer_cast(&d_features_items[0]),
                 small_preference.size(), _count_features, _sgd_lambda, _sgd_learning_rate);*/
+
+            update_features_2d_gpu << < grid_2d, block_2d >> > (thrust::raw_pointer_cast(&d_small_user_id[0]),
+                thrust::raw_pointer_cast(&d_small_item_id[0]), thrust::raw_pointer_cast(&d_small_preference[0]),
+                thrust::raw_pointer_cast(&d_features_users[0]), thrust::raw_pointer_cast(&d_features_items[0]),
+                small_preference.size(), _count_features, _sgd_lambda, _sgd_learning_rate);
 
 /*#pragma omp parallel for num_threads(omp_get_max_threads())
             for (int id = 0; id < small_preference.size(); id++) {
