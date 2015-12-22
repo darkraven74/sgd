@@ -500,27 +500,27 @@ void sgd::train_random_preferences()
         for (int i = 0; i < batch_iter_count; i++) {
             start = get_wall_time();
 
-            std::vector<int> small_item_id;
-            std::vector<float> small_preference;
+            std::vector<int> small_item_id(count_users_current);
+            std::vector<float> small_preference(count_users_current);
             for (int j = 0; j < count_users_current; j++) {
                 int user = cur_user_start + j;
                 int is_positive_rating = rand() % 10;
                 if (is_positive_rating < 1) {
                     int item_id = rand() % _user_likes[user].size();
                     int item = _user_likes[user][item_id];
-                    small_item_id.push_back(item);
-                    small_preference.push_back(1 + _sgd_alpha * _user_likes_weights[user][item_id]);
+                    small_item_id[j] = item;
+                    small_preference[j] = 1 + _sgd_alpha * _user_likes_weights[user][item_id];
                 }
                 else {
                     int item = rand() % _item_likes.size();
-                    small_item_id.push_back(item);
+                    small_item_id[j] = item;
                     std::vector<int>::iterator it = std::find(_user_likes[user].begin(), _user_likes[user].end(), item);
                     if (it == _user_likes[user].end()) {
-                        small_preference.push_back(0);
+                        small_preference[j] = 0;
                     }
                     else {
                         int item_id = std::distance(_user_likes[user].begin(), it);
-                        small_preference.push_back(1 + _sgd_alpha * _user_likes_weights[user][item_id]);
+                        small_preference[j] = 1 + _sgd_alpha * _user_likes_weights[user][item_id];
                     }
                 }
             }
