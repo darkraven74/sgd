@@ -230,8 +230,6 @@ void sgd::calculate(int count_iterations, int positive_ratings, int negative_rat
 
 }
 
-
-
 __global__ void update_features_gpu(int *user_ids, int *item_ids, float *preferences,
                                     float *features_users, float *features_items, int ratings_count,
                                     int _count_features, float _sgd_lambda, float _sgd_learning_rate)
@@ -325,7 +323,6 @@ __global__ void update_features_2d_gpu(int user_offset, int *item_ids, float *pr
 
         float error = err[threadIdx.x];
 
-
         float user_feature = features_users[user_mul_feat + feature_idx];
         float item_feature = features_items[item_mul_feat + feature_idx];
 
@@ -387,19 +384,30 @@ void sgd::train_random_preferences()
         for (int i = 0; i < batch_iter_count; i++) {
             start = get_wall_time();
 
+            std::vector<int> is_positive_ratings(count_users_current);
+            std::vector<int> rand_user_items(count_users_current);
+            std::vector<int> rand_items(count_users_current);
+
+            for (int j = 0; j < count_users_current; j++) {
+                is_positive_ratings[j] = rand() % 10;
+                rand_user_items[j] = rand() % _user_likes[cur_user_start + j].size();
+                rand_items[j] = rand() % _count_items;
+            }
+
             std::vector<int> small_item_id(count_users_current);
             std::vector<float> small_preference(count_users_current);
+
+#pragma omp parallel for num_threads(omp_get_max_threads())
             for (int j = 0; j < count_users_current; j++) {
                 int user = cur_user_start + j;
-                int is_positive_rating = rand() % 10;
-                if (is_positive_rating < 1) {
-                    int item_id = rand() % _user_likes[user].size();
+                if (is_positive_ratings[j] < 1) {
+                    int item_id = rand_user_items[j];
                     int item = _user_likes[user][item_id];
                     small_item_id[j] = item;
                     small_preference[j] = 1 + _sgd_alpha * _user_likes_weights[user][item_id];
                 }
                 else {
-                    int item = rand() % _item_likes.size();
+                    int item = rand_items[j];
                     small_item_id[j] = item;
                     std::vector<int>::iterator it = std::find(_user_likes[user].begin(), _user_likes[user].end(), item);
                     if (it == _user_likes[user].end()) {
