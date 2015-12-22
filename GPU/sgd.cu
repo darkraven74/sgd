@@ -9,6 +9,19 @@
 
 #define BLOCK_SIZE 2
 
+static unsigned int g_seed;
+
+inline void fast_srand(int seed)
+{
+    g_seed = seed;
+}
+
+inline int fastrand()
+{
+    g_seed = (214013 * g_seed + 2531011);
+    return (g_seed >> 16) & 0x7FFF;
+}
+
 double get_wall_time()
 {
     struct timeval time;
@@ -38,6 +51,7 @@ sgd::sgd(std::istream &tuples_stream,
 
 //    srand(time(NULL));
     srand(34);
+    fast_srand(34);
 
 
     read_likes(tuples_stream, count_samples, likes_format);
@@ -389,9 +403,9 @@ void sgd::train_random_preferences()
             std::vector<int> rand_items(count_users_current);
 
             for (int j = 0; j < count_users_current; j++) {
-                is_positive_ratings[j] = rand() % 10;
-                rand_user_items[j] = rand() % _user_likes[cur_user_start + j].size();
-                rand_items[j] = rand() % _count_items;
+                is_positive_ratings[j] = fastrand() % 10;
+                rand_user_items[j] = fastrand() % _user_likes[cur_user_start + j].size();
+                rand_items[j] = fastrand() % _count_items;
             }
 
             std::vector<int> small_item_id(count_users_current);
