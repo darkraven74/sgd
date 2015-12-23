@@ -7,7 +7,7 @@
 #include <thrust/host_vector.h>
 #include <thrust/copy.h>
 
-#define BLOCK_SIZE 2
+#define BLOCK_SIZE 4
 
 static unsigned int g_seed;
 
@@ -319,26 +319,50 @@ __global__ void update_features_2d_gpu(int user_offset, int *item_ids, float *pr
                                        int _count_features, float _sgd_lambda, float _sgd_learning_rate)
 {
     __shared__ float err[BLOCK_SIZE];
+//    __shared__ int locks[BLOCK_SIZE];
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     int feature_idx = blockIdx.y * blockDim.y + threadIdx.y;
     if (idx < ratings_count && feature_idx < _count_features) {
         int user_mul_feat = (user_offset + idx) * _count_features;
         int item_mul_feat = item_ids[idx] * _count_features;
 
+
+
         if (threadIdx.y == 0) {
+            err[threadIdx.x] = preferences[idx];
+//            locks[threadIdx.x] = 0;
+        }
+        __syncthreads();
+
+
+        float user_feature = features_users[user_mul_feat + feature_idx];
+        float item_feature = features_items[item_mul_feat + feature_idx];
+
+
+        /*while ( !atomicCAS(&locks[threadIdx.x], 0, 1))
+        {
+
+        }*/
+
+//        err[threadIdx.x] -= user_feature * item_feature;
+        atomicAdd(&err[threadIdx.x], -user_feature * item_feature);
+
+//        atomicExch(&locks[threadIdx.x], 0);
+
+
+
+        /*if (threadIdx.y == 0) {
             float prediction = 0;
             for (int i = 0; i < _count_features; i++) {
                 prediction += (features_users[user_mul_feat + i] * features_items[item_mul_feat + i]);
             }
             err[threadIdx.x] = preferences[idx] - prediction;
-        }
+        }*/
 
         __syncthreads();
 
         float error = err[threadIdx.x];
 
-        float user_feature = features_users[user_mul_feat + feature_idx];
-        float item_feature = features_items[item_mul_feat + feature_idx];
 
         float delta_user_feature = error * item_feature - _sgd_lambda * user_feature;
         float delta_item_feature = error * user_feature - _sgd_lambda * item_feature;
