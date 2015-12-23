@@ -96,7 +96,7 @@ protected:
 
     float get_prediction(int user, int item);
 
-    void update_features_small(int* user_ids, int* item_ids, float* preferences,
+    void update_features_small(int user_offsets, int* item_ids, float* preferences,
                                     float* features_users, float* features_items, int idx);
 
     float get_prediction_small(int user, int item, float* features_users, float* features_items);
