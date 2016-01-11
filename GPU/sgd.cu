@@ -223,7 +223,7 @@ void sgd::calculate(int count_iterations, int positive_ratings, int negative_rat
         std::cerr << "==== Iteration time : " << (end - start) / 1000000 << std::endl;
 
 
-        /*old_hr = new_hr;
+        old_hr = new_hr;
         new_hr = hit_rate_cpu();
         if (new_hr > old_hr) {
             _sgd_learning_rate *= 1.05;
@@ -231,7 +231,7 @@ void sgd::calculate(int count_iterations, int positive_ratings, int negative_rat
         else {
             _sgd_learning_rate *= 0.5;
         }
-        hr10 << new_hr << std::endl;*/
+        hr10 << new_hr << std::endl;
 
     }
 
@@ -281,7 +281,7 @@ __global__ void update_features_2d_gpu(int user_offset, int *item_ids, float *pr
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     int feature_idx = blockIdx.y * blockDim.y + threadIdx.y;
     if (idx < ratings_count && feature_idx < _count_features) {
-        int user_feat_idx = (user_offset + idx) * _count_features + feature_idx;
+        int user_feat_idx = (/*user_offset +*/ idx) * _count_features + feature_idx;
         int item_feat_idx = item_ids[idx] * _count_features + feature_idx;
 
         float user_feature = features_users[user_feat_idx];
@@ -312,12 +312,11 @@ void sgd::train_random_preferences()
     cudaDeviceSynchronize();
     size_t cuda_free_mem = 0;
     size_t cuda_total_mem = 0;
-    cudaMemGetInfo(&cuda_free_mem, &cuda_total_mem);
-    cudaDeviceSynchronize();
 
     double end = get_wall_time();
     transfers += (end - start);
 
+    std::cout << "free cuda memory: " << cuda_free_mem << std::endl;
     int cur_user_start = 0;
 
     while (cur_user_start < _count_users) {
@@ -325,17 +324,21 @@ void sgd::train_random_preferences()
 
         int user_left_size = _count_users - cur_user_start;
 
-        int count_users_current = (int) cuda_free_mem / ((_count_features + 2) * 4);
+        int count_users_current = (int) ((cuda_free_mem * 0.9) / ((_count_features + 2) * 4));
+//        int count_users_current = 50000;
         count_users_current = count_users_current > user_left_size ? user_left_size : count_users_current;
-//        count_users_current = 20000;
+
+        std::cout << "users left: " << user_left_size << std::endl;
+        std::cout << "current users count: " << count_users_current << std::endl;
+        std::cout << "current user start: " << cur_user_start << std::endl;
+        cudaMemGetInfo(&cuda_free_mem, &cuda_total_mem);
+        cudaDeviceSynchronize();
+        std::cout << "free cuda memory: " << cuda_free_mem << std::endl;
 
         thrust::device_vector<float> d_features_users(_features_users.begin() + cur_user_start * _count_features,
                                                       _features_users.begin()
                                                           + (cur_user_start + count_users_current) * _count_features);
 
-        /*std::vector<float> small_features_users(_features_users.begin() + cur_user_start * _count_features,
-                                                _features_users.begin()
-                                                    + (cur_user_start + count_users_current) * _count_features);*/
 
 
         dim3 block(BLOCK_SIZE, 1);
@@ -348,6 +351,9 @@ void sgd::train_random_preferences()
         end = get_wall_time();
         transfers += (end - start);
 
+        if ( cudaSuccess != cudaPeekAtLastError() )
+            std::cout <<  "!WARN - Cuda thrust error: "  << cudaGetErrorString(cudaGetLastError()) << std::endl;
+        std::cout << "d_features_users copied" << std::endl;
 
         int batch_iter_count = 10;
         for (int i = 0; i < batch_iter_count; i++) {
@@ -395,6 +401,10 @@ void sgd::train_random_preferences()
             end = get_wall_time();
             transfers += (end - start);
 
+            if ( cudaSuccess != cudaPeekAtLastError() )
+                std::cout <<  "!WARN - Cuda thrust error: "  << cudaGetErrorString(cudaGetLastError()) << std::endl;
+            std::cout << "d_ratings copied" << std::endl;
+
             start = get_wall_time();
 
 
@@ -407,7 +417,6 @@ void sgd::train_random_preferences()
             cudaDeviceSynchronize();*/
 
 
-
             update_features_2d_gpu << < grid_2d, block_2d >> > (cur_user_start,
                 thrust::raw_pointer_cast(&d_small_item_id[0]), thrust::raw_pointer_cast(&d_small_preference[0]),
                 thrust::raw_pointer_cast(&d_features_users[0]), thrust::raw_pointer_cast(&d_features_items[0]),
@@ -416,12 +425,16 @@ void sgd::train_random_preferences()
 /*#pragma omp parallel for num_threads(omp_get_max_threads())
             for (int id = 0; id < small_preference.size(); id++) {
                 update_features_small(cur_user_start, &small_item_id[0], &small_preference[0],
-                                      &small_features_users[0], &_features_items[0], id);
+                                      &_features_users[cur_user_start * _count_features], &_features_items[0], id);
             }*/
 
             cudaDeviceSynchronize();
             end = get_wall_time();
             calc += (end - start);
+            if ( cudaSuccess != cudaPeekAtLastError() )
+                std::cout <<  "!WARN - Cuda kernellll error: "  << cudaGetErrorString(cudaGetLastError()) << std::endl;
+            std::cout << "kernel finished" << std::endl;
+
         }
         start = get_wall_time();
 
@@ -432,6 +445,11 @@ void sgd::train_random_preferences()
         cudaDeviceSynchronize();
         end = get_wall_time();
         transfers += (end - start);
+
+        if ( cudaSuccess != cudaPeekAtLastError() )
+            std::cout <<  "!WARN - Cuda thrust error: "  << cudaGetErrorString(cudaGetLastError()) << std::endl;
+        std::cout << "users_fatures copied to host" << std::endl;
+
         cur_user_start += count_users_current;
     }
 
@@ -440,6 +458,9 @@ void sgd::train_random_preferences()
     thrust::copy(d_features_items.begin(), d_features_items.end(), _features_items.begin());
     cudaDeviceSynchronize();
     end = get_wall_time();
+    if ( cudaSuccess != cudaPeekAtLastError() )
+        std::cout <<  "!WARN - Cuda thrust error: "  << cudaGetErrorString(cudaGetLastError()) << std::endl;
+    std::cout << "items_fatures copied to host" << std::endl;
     transfers += (end - start);
 }
 
@@ -508,6 +529,7 @@ float sgd::hit_rate_cpu()
         return 0;
     }
     float tp = 0;
+    std::cout << "hr calc started.. ";
     for (int i = 0; i < test_set.size(); i++) {
         int user = test_set[i].first;
         int item = test_set[i].second;
@@ -537,6 +559,8 @@ float sgd::hit_rate_cpu()
             }
         }
     }
+    std::cout << "done\n";
+
 
     float hr10 = tp * 1.0 / test_set.size();
 
