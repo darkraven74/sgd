@@ -316,7 +316,7 @@ void sgd::train_random_preferences()
     double end = get_wall_time();
     transfers += (end - start);
 
-    std::cout << "free cuda memory: " << cuda_free_mem << std::endl;
+    //std::cout << "free cuda memory: " << cuda_free_mem << std::endl;
     int cur_user_start = 0;
 
     while (cur_user_start < _count_users) {
@@ -328,12 +328,12 @@ void sgd::train_random_preferences()
 //        int count_users_current = 50000;
         count_users_current = count_users_current > user_left_size ? user_left_size : count_users_current;
 
-        std::cout << "users left: " << user_left_size << std::endl;
-        std::cout << "current users count: " << count_users_current << std::endl;
-        std::cout << "current user start: " << cur_user_start << std::endl;
+        //std::cout << "users left: " << user_left_size << std::endl;
+        //std::cout << "current users count: " << count_users_current << std::endl;
+        //std::cout << "current user start: " << cur_user_start << std::endl;
         cudaMemGetInfo(&cuda_free_mem, &cuda_total_mem);
         cudaDeviceSynchronize();
-        std::cout << "free cuda memory: " << cuda_free_mem << std::endl;
+        //std::cout << "free cuda memory: " << cuda_free_mem << std::endl;
 
         thrust::device_vector<float> d_features_users(_features_users.begin() + cur_user_start * _count_features,
                                                       _features_users.begin()
@@ -353,7 +353,7 @@ void sgd::train_random_preferences()
 
         if ( cudaSuccess != cudaPeekAtLastError() )
             std::cout <<  "!WARN - Cuda thrust error: "  << cudaGetErrorString(cudaGetLastError()) << std::endl;
-        std::cout << "d_features_users copied" << std::endl;
+        //std::cout << "d_features_users copied" << std::endl;
 
         int batch_iter_count = 10;
         for (int i = 0; i < batch_iter_count; i++) {
@@ -403,7 +403,7 @@ void sgd::train_random_preferences()
 
             if ( cudaSuccess != cudaPeekAtLastError() )
                 std::cout <<  "!WARN - Cuda thrust error: "  << cudaGetErrorString(cudaGetLastError()) << std::endl;
-            std::cout << "d_ratings copied" << std::endl;
+            //std::cout << "d_ratings copied" << std::endl;
 
             start = get_wall_time();
 
@@ -433,7 +433,7 @@ void sgd::train_random_preferences()
             calc += (end - start);
             if ( cudaSuccess != cudaPeekAtLastError() )
                 std::cout <<  "!WARN - Cuda kernellll error: "  << cudaGetErrorString(cudaGetLastError()) << std::endl;
-            std::cout << "kernel finished" << std::endl;
+            //std::cout << "kernel finished" << std::endl;
 
         }
         start = get_wall_time();
@@ -448,7 +448,7 @@ void sgd::train_random_preferences()
 
         if ( cudaSuccess != cudaPeekAtLastError() )
             std::cout <<  "!WARN - Cuda thrust error: "  << cudaGetErrorString(cudaGetLastError()) << std::endl;
-        std::cout << "users_fatures copied to host" << std::endl;
+        //std::cout << "users_fatures copied to host" << std::endl;
 
         cur_user_start += count_users_current;
     }
@@ -460,7 +460,7 @@ void sgd::train_random_preferences()
     end = get_wall_time();
     if ( cudaSuccess != cudaPeekAtLastError() )
         std::cout <<  "!WARN - Cuda thrust error: "  << cudaGetErrorString(cudaGetLastError()) << std::endl;
-    std::cout << "items_fatures copied to host" << std::endl;
+    //std::cout << "items_fatures copied to host" << std::endl;
     transfers += (end - start);
 }
 
