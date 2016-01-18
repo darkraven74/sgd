@@ -244,35 +244,6 @@ void sgd::calculate(int count_iterations, int positive_ratings, int negative_rat
 
 }
 
-__global__ void update_features_gpu(int *user_ids, int *item_ids, float *preferences,
-                                    float *features_users, float *features_items, int ratings_count,
-                                    int _count_features, float _sgd_lambda, float _sgd_learning_rate)
-{
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx < ratings_count) {
-        int user_mul_feat = user_ids[idx] * _count_features;
-        int item_mul_feat = item_ids[idx] * _count_features;
-
-        float prediction = 0;
-        for (int i = 0; i < _count_features; i++) {
-            prediction += (features_users[user_mul_feat + i] * features_items[item_mul_feat + i]);
-        }
-
-        float error = preferences[idx] - prediction;
-
-        for (int i = 0; i < _count_features; i++) {
-            float user_feature = features_users[user_mul_feat + i];
-            float item_feature = features_items[item_mul_feat + i];
-
-            float delta_user_feature = error * item_feature - _sgd_lambda * user_feature;
-            float delta_item_feature = error * user_feature - _sgd_lambda * item_feature;
-
-            features_users[user_mul_feat + i] = user_feature + (_sgd_learning_rate * delta_user_feature);
-            features_items[item_mul_feat + i] = item_feature + (_sgd_learning_rate * delta_item_feature);
-        }
-    }
-}
-
 __global__ void update_features_2d_gpu(int user_offset, int *item_ids, float *preferences,
                                        float *features_users, float *features_items, int ratings_count,
                                        int _count_features, float _sgd_lambda, float _sgd_learning_rate)
@@ -281,7 +252,7 @@ __global__ void update_features_2d_gpu(int user_offset, int *item_ids, float *pr
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     int feature_idx = blockIdx.y * blockDim.y + threadIdx.y;
     if (idx < ratings_count && feature_idx < _count_features) {
-        int user_feat_idx = (/*user_offset +*/ idx) * _count_features + feature_idx;
+        int user_feat_idx = idx * _count_features + feature_idx;
         int item_feat_idx = item_ids[idx] * _count_features + feature_idx;
 
         float user_feature = features_users[user_feat_idx];
