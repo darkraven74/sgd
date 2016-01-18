@@ -46,7 +46,7 @@ public:
     /// in
     /// count_iterations - count iterations
     ///
-    virtual void calculate(int count_iterations, int positive_ratings, int negative_ratings);
+    virtual void calculate(int count_iterations, int positive_ratings, int negative_ratings, int is_gpu_calc);
 
     virtual float hit_rate_cpu();
 
@@ -88,18 +88,16 @@ protected:
     ///
     void fill_rnd(features_vector &in_v, int in_size);
 
-    void train_random_preferences();
+    void train_random_preferences_cpu();
 
-    void update_features(int user, int item, float preference);
+    void train_random_preferences_gpu();
 
     void update_features_avg(int user, int item, float preference);
 
-    float get_prediction(int user, int item);
+    void update_features(int *item_ids, float *preferences,
+                         float *features_users, float *features_items, int idx);
 
-    void update_features_small(int user_offsets, int* item_ids, float* preferences,
-                                    float* features_users, float* features_items, int idx);
-
-    float get_prediction_small(int user, int item, float* features_users, float* features_items);
+    float get_prediction(int user, int item, float *features_users, float *features_items);
 
     void generate_test_set();
 

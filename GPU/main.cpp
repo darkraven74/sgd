@@ -23,6 +23,8 @@ int main(int argc, char *argv[])
     int positive_ratings = 100000;
     int negative_ratings = 1000000;
 
+    int is_gpu_calc = 1;
+
 
     for (int i = 1; i < argc; i++) {
         std::string sarg = argv[i];
@@ -59,6 +61,10 @@ int main(int argc, char *argv[])
             i++;
             negative_ratings = atoi(argv[i]);
         }
+        else if (!sarg.compare("--is_gpu_calc")) {
+            i++;
+            is_gpu_calc = atoi(argv[i]);
+        }
     }
 
     std::ifstream f_stream(likes_file_name.c_str());
@@ -73,7 +79,7 @@ int main(int argc, char *argv[])
 
     double start = get_wall_time();
 
-    sgd_alg.calculate(cit, positive_ratings, negative_ratings);
+    sgd_alg.calculate(cit, positive_ratings, negative_ratings, is_gpu_calc);
 
     double end = get_wall_time();
     std::cout << "sgd calc time, s: " << (end - start) / 1000000 << std::endl;
