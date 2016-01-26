@@ -47,7 +47,8 @@ sgd::sgd(std::istream &tuples_stream,
     _sgd_lambda(lambda),
     _sgd_alpha(alpha)
 {
-
+    curandCreateGenerator(&gen, CURAND_RNG_PSEUDO_XORWOW);
+    curandSetPseudoRandomGeneratorSeed(gen, 1234ULL);
 
 //    srand(time(NULL));
     srand(34);
@@ -57,7 +58,6 @@ sgd::sgd(std::istream &tuples_stream,
     read_likes(tuples_stream, count_samples, likes_format);
 
     generate_test_set();
-
 
     _features_users.assign(_count_users * _count_features, 0);
     _features_items.assign(_count_items * _count_features, 0);
@@ -280,6 +280,9 @@ __global__ void update_features_2d_gpu(int user_offset, int *item_ids, float *pr
 
 void sgd::train_random_preferences_cpu()
 {
+    thrust::device_vector<unsigned int> random_data(3 * _count_users);
+    std::vector<unsigned int> random_data_host(3 * _count_users);
+
     int batch_iter_count = 10;
     for (int i = 0; i < batch_iter_count; i++) {
         double start = get_wall_time();
@@ -288,10 +291,23 @@ void sgd::train_random_preferences_cpu()
         std::vector<int> rand_user_items(_count_users);
         std::vector<int> rand_items(_count_users);
 
-        for (int j = 0; j < _count_users; j++) {
+        /*for (int j = 0; j < _count_users; j++) {
             is_positive_ratings[j] = fastrand() % 10;
             rand_user_items[j] = fastrand() % _user_likes[j].size();
             rand_items[j] = fastrand() % _count_items;
+        }*/
+
+        curandGenerate(gen, thrust::raw_pointer_cast(&random_data.front()), 3 * _count_users);
+        thrust::copy(random_data.begin(), random_data.end(), random_data_host.begin());
+        cudaDeviceSynchronize();
+
+
+
+#pragma omp parallel for num_threads(omp_get_max_threads())
+        for (int j = 0; j < _count_users; j++) {
+            is_positive_ratings[j] = random_data_host[j] % 10;
+            rand_user_items[j] = random_data_host[j + 1] % _user_likes[j].size();
+            rand_items[j] = random_data_host[j + 2] % _count_items;
         }
 
         std::vector<int> small_item_id(_count_users);

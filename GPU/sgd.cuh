@@ -8,6 +8,8 @@
 #include <iostream>
 #include <sys/time.h>
 #include <omp.h>
+#include <curand.h>
+
 
 class sgd
 {
@@ -139,6 +141,9 @@ private:
 
     double transfers;
     double calc;
+
+    curandGenerator_t gen;
+
 };
 
 double get_wall_time();
