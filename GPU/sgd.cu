@@ -204,7 +204,8 @@ void sgd::calculate(int count_iterations, int positive_ratings, int negative_rat
 
         if (is_gpu_calc) {
             train_random_preferences_gpu();
-        } else {
+        }
+        else {
             train_random_preferences_cpu();
         }
 
@@ -247,7 +248,7 @@ void sgd::calculate(int count_iterations, int positive_ratings, int negative_rat
 
 }
 
-__global__ void update_features_2d_gpu(int user_offset, int *item_ids, float *preferences,
+__global__ void update_features_2d_gpu(int *item_ids, float *preferences,
                                        float *features_users, float *features_items, int ratings_count,
                                        int _count_features, float _sgd_lambda, float _sgd_learning_rate)
 {
@@ -255,26 +256,29 @@ __global__ void update_features_2d_gpu(int user_offset, int *item_ids, float *pr
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     int feature_idx = blockIdx.y * blockDim.y + threadIdx.y;
     if (idx < ratings_count && feature_idx < _count_features) {
-        int user_feat_idx = idx * _count_features + feature_idx;
-        int item_feat_idx = item_ids[idx] * _count_features + feature_idx;
+        int item_id = item_ids[idx];
+        if (item_id != -1) {
+            int user_feat_idx = idx * _count_features + feature_idx;
+            int item_feat_idx = item_id * _count_features + feature_idx;
 
-        float user_feature = features_users[user_feat_idx];
-        float item_feature = features_items[item_feat_idx];
+            float user_feature = features_users[user_feat_idx];
+            float item_feature = features_items[item_feat_idx];
 
-        err[threadIdx.x] = preferences[idx];
-        __syncthreads();
+            err[threadIdx.x] = preferences[idx];
+            __syncthreads();
 
-        atomicAdd(&err[threadIdx.x], -user_feature * item_feature);
+            atomicAdd(&err[threadIdx.x], -user_feature * item_feature);
 
-        __syncthreads();
+            __syncthreads();
 
-        float error = err[threadIdx.x];
+            float error = err[threadIdx.x];
 
-        float delta_user_feature = error * item_feature - _sgd_lambda * user_feature;
-        float delta_item_feature = error * user_feature - _sgd_lambda * item_feature;
+            float delta_user_feature = error * item_feature - _sgd_lambda * user_feature;
+            float delta_item_feature = error * user_feature - _sgd_lambda * item_feature;
 
-        features_users[user_feat_idx] = user_feature + (_sgd_learning_rate * delta_user_feature);
-        features_items[item_feat_idx] = item_feature + (_sgd_learning_rate * delta_item_feature);
+            features_users[user_feat_idx] = user_feature + (_sgd_learning_rate * delta_user_feature);
+            features_items[item_feat_idx] = item_feature + (_sgd_learning_rate * delta_item_feature);
+        }
     }
 }
 
@@ -300,7 +304,6 @@ void sgd::train_random_preferences_cpu()
         curandGenerate(gen, thrust::raw_pointer_cast(&random_data.front()), 3 * _count_users);
         thrust::copy(random_data.begin(), random_data.end(), random_data_host.begin());
         cudaDeviceSynchronize();
-
 
 
 #pragma omp parallel for num_threads(omp_get_max_threads())
@@ -352,139 +355,156 @@ void sgd::train_random_preferences_cpu()
 
 void sgd::train_random_preferences_gpu()
 {
-    double start = get_wall_time();
-
-    thrust::device_vector<float> d_features_items(_features_items);
-    cudaDeviceSynchronize();
     size_t cuda_free_mem = 0;
     size_t cuda_total_mem = 0;
 
-    double end = get_wall_time();
-    transfers += (end - start);
+    int cur_item_start = 0;
 
-    //std::cout << "free cuda memory: " << cuda_free_mem << std::endl;
-    int cur_user_start = 0;
+    while (cur_item_start < _count_items) {
+        double start = get_wall_time();
+        double end;
 
-    while (cur_user_start < _count_users) {
-        start = get_wall_time();
+        int item_left_size = _count_items - cur_item_start;
 
-        int user_left_size = _count_users - cur_user_start;
-
-        int count_users_current = (int) ((cuda_free_mem * 0.9) / ((_count_features + 2) * 4));
-//        int count_users_current = 50000;
-        count_users_current = count_users_current > user_left_size ? user_left_size : count_users_current;
-
-        //std::cout << "users left: " << user_left_size << std::endl;
-        //std::cout << "current users count: " << count_users_current << std::endl;
-        //std::cout << "current user start: " << cur_user_start << std::endl;
         cudaMemGetInfo(&cuda_free_mem, &cuda_total_mem);
-        cudaDeviceSynchronize();
-        //std::cout << "free cuda memory: " << cuda_free_mem << std::endl;
+        int count_items_current = (int) ((cuda_free_mem * 0.5) / (_count_features * 4));
 
-        thrust::device_vector<float> d_features_users(_features_users.begin() + cur_user_start * _count_features,
-                                                      _features_users.begin()
-                                                          + (cur_user_start + count_users_current) * _count_features);
+        count_items_current = 4000;
+        //!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+        count_items_current = count_items_current > item_left_size ? item_left_size : count_items_current;
 
-        dim3 block_2d(BLOCK_SIZE, 64);
-        dim3 grid_2d(1 + count_users_current / BLOCK_SIZE, 1 + _count_features / 64);
+        thrust::device_vector<float> d_features_items(_features_items.begin() + cur_item_start * _count_features,
+                                                      _features_items.begin()
+                                                          + (cur_item_start + count_items_current) * _count_features);
+
+        int cur_user_start = 0;
 
         cudaDeviceSynchronize();
         end = get_wall_time();
         transfers += (end - start);
 
-        if (cudaSuccess != cudaPeekAtLastError())
-            std::cout << "!WARN - Cuda thrust error: " << cudaGetErrorString(cudaGetLastError()) << std::endl;
-        //std::cout << "d_features_users copied" << std::endl;
+        std::cout << "--Items size: " << count_items_current << std::endl;
 
-        int batch_iter_count = 10;
-        for (int i = 0; i < batch_iter_count; i++) {
+        while (cur_user_start < _count_users) {
             start = get_wall_time();
 
-            std::vector<int> is_positive_ratings(count_users_current);
-            std::vector<int> rand_user_items(count_users_current);
-            std::vector<int> rand_items(count_users_current);
+            int user_left_size = _count_users - cur_user_start;
 
-            for (int j = 0; j < count_users_current; j++) {
-                is_positive_ratings[j] = fastrand() % 10;
-                rand_user_items[j] = fastrand() % _user_likes[cur_user_start + j].size();
-                rand_items[j] = fastrand() % _count_items;
-            }
+            cudaMemGetInfo(&cuda_free_mem, &cuda_total_mem);
+            int count_users_current = (int) ((cuda_free_mem * 0.9) / ((_count_features + 2) * 4));
+            count_users_current = count_users_current > user_left_size ? user_left_size : count_users_current;
 
-            std::vector<int> small_item_id(count_users_current);
-            std::vector<float> small_preference(count_users_current);
+            thrust::device_vector<float> d_features_users(_features_users.begin() + cur_user_start * _count_features,
+                                                          _features_users.begin()
+                                                              + (cur_user_start + count_users_current)
+                                                                  * _count_features);
+
+            dim3 block_2d(BLOCK_SIZE, 64);
+            dim3 grid_2d(1 + count_users_current / BLOCK_SIZE, 1 + _count_features / 64);
+
+            cudaDeviceSynchronize();
+            end = get_wall_time();
+            transfers += (end - start);
+
+            std::cout << "---Users size: " << count_users_current << std::endl;
+
+            if (cudaSuccess != cudaPeekAtLastError())
+                std::cout << "!WARN - Cuda thrust error: " << cudaGetErrorString(cudaGetLastError()) << std::endl;
+
+            int batch_iter_count = 10;
+            for (int i = 0; i < batch_iter_count; i++) {
+                start = get_wall_time();
+
+                std::vector<int> is_positive_ratings(count_users_current);
+                std::vector<int> rand_user_items(count_users_current);
+                std::vector<int> rand_items(count_users_current);
+
+                for (int j = 0; j < count_users_current; j++) {
+                    is_positive_ratings[j] = fastrand() % 10;
+                    rand_user_items[j] = fastrand() % _user_likes[cur_user_start + j].size();
+                    rand_items[j] = fastrand() % count_items_current;
+                }
+
+                std::vector<int> small_item_id(count_users_current);
+                std::vector<float> small_preference(count_users_current);
 
 #pragma omp parallel for num_threads(omp_get_max_threads())
-            for (int j = 0; j < count_users_current; j++) {
-                int user = cur_user_start + j;
-                if (is_positive_ratings[j] < 1) {
-                    int item_id = rand_user_items[j];
-                    int item = _user_likes[user][item_id];
-                    small_item_id[j] = item;
-                    small_preference[j] = 1 + _sgd_alpha * _user_likes_weights[user][item_id];
-                }
-                else {
-                    int item = rand_items[j];
-                    small_item_id[j] = item;
-                    std::vector<int>::iterator it = std::find(_user_likes[user].begin(), _user_likes[user].end(), item);
-                    if (it == _user_likes[user].end()) {
-                        small_preference[j] = 0;
-                    }
-                    else {
-                        int item_id = std::distance(_user_likes[user].begin(), it);
+                for (int j = 0; j < count_users_current; j++) {
+                    int user = cur_user_start + j;
+                    if (is_positive_ratings[j] < 1) {
+                        int item_id = rand_user_items[j];
+                        int item = _user_likes[user][item_id];
+                        if (item >= cur_item_start && item < cur_item_start + count_items_current) {
+                            small_item_id[j] = item - cur_item_start;
+                        }
+                        else {
+                            small_item_id[j] = -1;
+                        }
                         small_preference[j] = 1 + _sgd_alpha * _user_likes_weights[user][item_id];
                     }
+                    else {
+                        int item = rand_items[j];
+                        small_item_id[j] = item;
+                        std::vector<int>::iterator
+                            it = std::find(_user_likes[user].begin(), _user_likes[user].end(), item + cur_item_start);
+                        if (it == _user_likes[user].end()) {
+                            small_preference[j] = 0;
+                        }
+                        else {
+                            int item_id = std::distance(_user_likes[user].begin(), it);
+                            small_preference[j] = 1 + _sgd_alpha * _user_likes_weights[user][item_id];
+                        }
+                    }
                 }
-            }
-            thrust::device_vector<int> d_small_item_id(small_item_id);
-            thrust::device_vector<float> d_small_preference(small_preference);
+                thrust::device_vector<int> d_small_item_id(small_item_id);
+                thrust::device_vector<float> d_small_preference(small_preference);
 
+                cudaDeviceSynchronize();
+                end = get_wall_time();
+                transfers += (end - start);
+
+                if (cudaSuccess != cudaPeekAtLastError())
+                    std::cout << "!WARN - Cuda thrust error: " << cudaGetErrorString(cudaGetLastError()) << std::endl;
+
+                start = get_wall_time();
+
+                update_features_2d_gpu << < grid_2d, block_2d >> > (
+                    thrust::raw_pointer_cast(&d_small_item_id[0]), thrust::raw_pointer_cast(&d_small_preference[0]),
+                        thrust::raw_pointer_cast(&d_features_users[0]), thrust::raw_pointer_cast(&d_features_items[0]),
+                        small_preference.size(), _count_features, _sgd_lambda, _sgd_learning_rate);
+
+                cudaDeviceSynchronize();
+                end = get_wall_time();
+                calc += (end - start);
+                if (cudaSuccess != cudaPeekAtLastError())
+                    std::cout << "!WARN - Cuda kernellll error: " << cudaGetErrorString(cudaGetLastError())
+                        << std::endl;
+
+            }
+            start = get_wall_time();
+
+            thrust::copy(d_features_users.begin(), d_features_users.end(),
+                         _features_users.begin() + cur_user_start * _count_features);
             cudaDeviceSynchronize();
             end = get_wall_time();
             transfers += (end - start);
 
             if (cudaSuccess != cudaPeekAtLastError())
                 std::cout << "!WARN - Cuda thrust error: " << cudaGetErrorString(cudaGetLastError()) << std::endl;
-            //std::cout << "d_ratings copied" << std::endl;
 
-            start = get_wall_time();
-
-            update_features_2d_gpu << < grid_2d, block_2d >> > (cur_user_start,
-                thrust::raw_pointer_cast(&d_small_item_id[0]), thrust::raw_pointer_cast(&d_small_preference[0]),
-                thrust::raw_pointer_cast(&d_features_users[0]), thrust::raw_pointer_cast(&d_features_items[0]),
-                small_preference.size(), _count_features, _sgd_lambda, _sgd_learning_rate);
-
-            cudaDeviceSynchronize();
-            end = get_wall_time();
-            calc += (end - start);
-            if (cudaSuccess != cudaPeekAtLastError())
-                std::cout << "!WARN - Cuda kernellll error: " << cudaGetErrorString(cudaGetLastError()) << std::endl;
-            //std::cout << "kernel finished" << std::endl;
-
+            cur_user_start += count_users_current;
         }
+
         start = get_wall_time();
 
-        thrust::copy(d_features_users.begin(), d_features_users.end(),
-                     _features_users.begin() + cur_user_start * _count_features);
+        thrust::copy(d_features_items.begin(), d_features_items.end(),
+                     _features_items.begin() + cur_item_start * _count_features);
+
         cudaDeviceSynchronize();
         end = get_wall_time();
         transfers += (end - start);
-
-        if (cudaSuccess != cudaPeekAtLastError())
-            std::cout << "!WARN - Cuda thrust error: " << cudaGetErrorString(cudaGetLastError()) << std::endl;
-        //std::cout << "users_fatures copied to host" << std::endl;
-
-        cur_user_start += count_users_current;
+        cur_item_start += count_items_current;
     }
-
-    start = get_wall_time();
-
-    thrust::copy(d_features_items.begin(), d_features_items.end(), _features_items.begin());
-    cudaDeviceSynchronize();
-    end = get_wall_time();
-    if (cudaSuccess != cudaPeekAtLastError())
-        std::cout << "!WARN - Cuda thrust error: " << cudaGetErrorString(cudaGetLastError()) << std::endl;
-    //std::cout << "items_fatures copied to host" << std::endl;
-    transfers += (end - start);
 }
 
 void sgd::update_features(int *item_ids, float *preferences,
