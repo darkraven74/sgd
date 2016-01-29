@@ -367,10 +367,8 @@ void sgd::train_random_preferences_gpu()
         int item_left_size = _count_items - cur_item_start;
 
         cudaMemGetInfo(&cuda_free_mem, &cuda_total_mem);
-        int count_items_current = (int) ((cuda_free_mem * 0.5) / (_count_features * 4));
+        int count_items_current = (int) ((cuda_free_mem * 0.75) / (_count_features * 4));
 
-        count_items_current = 4000;
-        //!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
         count_items_current = count_items_current > item_left_size ? item_left_size : count_items_current;
 
         thrust::device_vector<float> d_features_items(_features_items.begin() + cur_item_start * _count_features,
@@ -391,7 +389,7 @@ void sgd::train_random_preferences_gpu()
             int user_left_size = _count_users - cur_user_start;
 
             cudaMemGetInfo(&cuda_free_mem, &cuda_total_mem);
-            int count_users_current = (int) ((cuda_free_mem * 0.9) / ((_count_features + 2) * 4));
+            int count_users_current = (int) ((cuda_free_mem * 0.95) / ((_count_features + 5) * 4));
             count_users_current = count_users_current > user_left_size ? user_left_size : count_users_current;
 
             thrust::device_vector<float> d_features_users(_features_users.begin() + cur_user_start * _count_features,
@@ -411,6 +409,9 @@ void sgd::train_random_preferences_gpu()
             if (cudaSuccess != cudaPeekAtLastError())
                 std::cout << "!WARN - Cuda thrust error: " << cudaGetErrorString(cudaGetLastError()) << std::endl;
 
+            thrust::device_vector<unsigned int> random_data(3 * count_users_current);
+            std::vector<unsigned int> random_data_host(3 * count_users_current);
+
             int batch_iter_count = 10;
             for (int i = 0; i < batch_iter_count; i++) {
                 start = get_wall_time();
@@ -419,11 +420,22 @@ void sgd::train_random_preferences_gpu()
                 std::vector<int> rand_user_items(count_users_current);
                 std::vector<int> rand_items(count_users_current);
 
+                curandGenerate(gen, thrust::raw_pointer_cast(&random_data.front()), 3 * count_users_current);
+                thrust::copy(random_data.begin(), random_data.end(), random_data_host.begin());
+                cudaDeviceSynchronize();
+
+#pragma omp parallel for num_threads(omp_get_max_threads())
                 for (int j = 0; j < count_users_current; j++) {
+                    is_positive_ratings[j] = random_data_host[j] % 10;
+                    rand_user_items[j] = random_data_host[j + 1] % _user_likes[cur_user_start + j].size();
+                    rand_items[j] = random_data_host[j + 2] % count_items_current;
+                }
+
+                /*for (int j = 0; j < count_users_current; j++) {
                     is_positive_ratings[j] = fastrand() % 10;
                     rand_user_items[j] = fastrand() % _user_likes[cur_user_start + j].size();
                     rand_items[j] = fastrand() % count_items_current;
-                }
+                }*/
 
                 std::vector<int> small_item_id(count_users_current);
                 std::vector<float> small_preference(count_users_current);
@@ -559,6 +571,7 @@ float sgd::hit_rate_cpu()
             predict[j] = sum;
         }
 
+#pragma omp parallel for num_threads(omp_get_max_threads())
         for (unsigned int j = 0; j < _user_likes[user].size(); j++) {
             int item_id = _user_likes[user][j];
             predict[item_id] = -1000000;
