@@ -186,6 +186,7 @@ void sgd::calculate(int count_iterations, int positive_ratings, int negative_rat
     fill_rnd(_features_items, _count_items);
 
     std::ofstream hr10("hr10.txt");
+    std::ofstream learn_rate("learn_rate.txt");
 
     _positive_ratings = positive_ratings;
     _negative_ratings = negative_ratings;
@@ -226,6 +227,7 @@ void sgd::calculate(int count_iterations, int positive_ratings, int negative_rat
 
         std::cerr << "==== Iteration time : " << (end - start) / 1000000 << std::endl;
 
+        learn_rate << _sgd_learning_rate << std::endl;
 
         old_hr = new_hr;
         new_hr = hit_rate_cpu();
@@ -237,6 +239,7 @@ void sgd::calculate(int count_iterations, int positive_ratings, int negative_rat
         }
         hr10 << new_hr << std::endl;
 
+
     }
 
     std::cout << "Profiler:\n";
@@ -245,6 +248,7 @@ void sgd::calculate(int count_iterations, int positive_ratings, int negative_rat
 
 
     hr10.close();
+    learn_rate.close();
 
 }
 
@@ -287,7 +291,7 @@ void sgd::train_random_preferences_cpu()
     thrust::device_vector<unsigned int> random_data(3 * _count_users);
     std::vector<unsigned int> random_data_host(3 * _count_users);
 
-    int batch_iter_count = 10;
+    int batch_iter_count = 100;
     for (int i = 0; i < batch_iter_count; i++) {
         double start = get_wall_time();
 
@@ -375,6 +379,10 @@ void sgd::train_random_preferences_gpu()
                                                       _features_items.begin()
                                                           + (cur_item_start + count_items_current) * _count_features);
 
+        std::vector<float> h_features_items(_features_items.begin() + cur_item_start * _count_features,
+                                            _features_items.begin()
+                                                + (cur_item_start + count_items_current) * _count_features);
+
         int cur_user_start = 0;
 
         cudaDeviceSynchronize();
@@ -397,6 +405,11 @@ void sgd::train_random_preferences_gpu()
                                                               + (cur_user_start + count_users_current)
                                                                   * _count_features);
 
+            std::vector<float> h_features_users(_features_users.begin() + cur_user_start * _count_features,
+                                                _features_users.begin()
+                                                    + (cur_user_start + count_users_current)
+                                                        * _count_features);
+
             dim3 block_2d(BLOCK_SIZE, 64);
             dim3 grid_2d(1 + count_users_current / BLOCK_SIZE, 1 + _count_features / 64);
 
@@ -412,7 +425,7 @@ void sgd::train_random_preferences_gpu()
             thrust::device_vector<unsigned int> random_data(3 * count_users_current);
             std::vector<unsigned int> random_data_host(3 * count_users_current);
 
-            int batch_iter_count = 10;
+            int batch_iter_count = 1;
             for (int i = 0; i < batch_iter_count; i++) {
                 start = get_wall_time();
 
@@ -485,6 +498,14 @@ void sgd::train_random_preferences_gpu()
                         thrust::raw_pointer_cast(&d_features_users[0]), thrust::raw_pointer_cast(&d_features_items[0]),
                         small_preference.size(), _count_features, _sgd_lambda, _sgd_learning_rate);
 
+
+/*#pragma omp parallel for num_threads(omp_get_max_threads())
+                for (int id = 0; id < small_preference.size(); id++) {
+                    update_features(&small_item_id[0], &small_preference[0],
+                                    &h_features_users[0], &h_features_items[0], id);
+                }*/
+
+
                 cudaDeviceSynchronize();
                 end = get_wall_time();
                 calc += (end - start);
@@ -497,6 +518,10 @@ void sgd::train_random_preferences_gpu()
 
             thrust::copy(d_features_users.begin(), d_features_users.end(),
                          _features_users.begin() + cur_user_start * _count_features);
+
+//            std::copy(h_features_users.begin(), h_features_users.end(),
+//                         _features_users.begin() + cur_user_start * _count_features);
+
             cudaDeviceSynchronize();
             end = get_wall_time();
             transfers += (end - start);
@@ -511,6 +536,10 @@ void sgd::train_random_preferences_gpu()
 
         thrust::copy(d_features_items.begin(), d_features_items.end(),
                      _features_items.begin() + cur_item_start * _count_features);
+
+//        std::copy(h_features_items.begin(), h_features_items.end(),
+//                     _features_items.begin() + cur_item_start * _count_features);
+
 
         cudaDeviceSynchronize();
         end = get_wall_time();
