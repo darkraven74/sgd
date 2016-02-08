@@ -239,7 +239,6 @@ void sgd::calculate(int count_iterations, int positive_ratings, int negative_rat
         }
         hr10 << new_hr << std::endl;
 
-
     }
 
     std::cout << "Profiler:\n";
@@ -362,16 +361,77 @@ void sgd::train_random_preferences_gpu()
     size_t cuda_free_mem = 0;
     size_t cuda_total_mem = 0;
 
+    int batch_iter_count = 100;
+
+    std::vector<int> global_item_id(_count_users * batch_iter_count);
+    std::vector<float> global_preference(_count_users * batch_iter_count);
+
+    double start = get_wall_time();
+    double end;
+
+    // select ratings for all users for all batches
+    for (int i = 0; i < batch_iter_count; i++) {
+        thrust::device_vector<unsigned int> random_data(3 * _count_users);
+        std::vector<unsigned int> random_data_host(3 * _count_users);
+
+        std::vector<int> is_positive_ratings(_count_users);
+        std::vector<int> rand_user_items(_count_users);
+        std::vector<int> rand_items(_count_users);
+
+        curandGenerate(gen, thrust::raw_pointer_cast(&random_data.front()), 3 * _count_users);
+        thrust::copy(random_data.begin(), random_data.end(), random_data_host.begin());
+        cudaDeviceSynchronize();
+
+
+#pragma omp parallel for num_threads(omp_get_max_threads())
+        for (int j = 0; j < _count_users; j++) {
+            is_positive_ratings[j] = random_data_host[j] % 10;
+            rand_user_items[j] = random_data_host[j + 1] % _user_likes[j].size();
+            rand_items[j] = random_data_host[j + 2] % _count_items;
+        }
+
+
+#pragma omp parallel for num_threads(omp_get_max_threads())
+        for (int user = 0; user < _count_users; user++) {
+            if (is_positive_ratings[user] < 1) {
+                int item_id = rand_user_items[user];
+                int item = _user_likes[user][item_id];
+                global_item_id[i * _count_users + user] = item;
+                global_preference[i * _count_users + user] = 1 + _sgd_alpha * _user_likes_weights[user][item_id];
+            }
+            else {
+                int item = rand_items[user];
+                global_item_id[i * _count_users + user] = item;
+                std::vector<int>::iterator it = std::find(_user_likes[user].begin(), _user_likes[user].end(), item);
+                if (it == _user_likes[user].end()) {
+                    global_preference[i * _count_users + user] = 0;
+                }
+                else {
+                    int item_id = std::distance(_user_likes[user].begin(), it);
+                    global_preference[i * _count_users + user] = 1 + _sgd_alpha * _user_likes_weights[user][item_id];
+                }
+            }
+        }
+    }
+
+    end = get_wall_time();
+    transfers += (end - start);
+
     int cur_item_start = 0;
 
+    // load items by parts
     while (cur_item_start < _count_items) {
-        double start = get_wall_time();
-        double end;
+        start = get_wall_time();
 
         int item_left_size = _count_items - cur_item_start;
 
         cudaMemGetInfo(&cuda_free_mem, &cuda_total_mem);
         int count_items_current = (int) ((cuda_free_mem * 0.75) / (_count_features * 4));
+
+
+        //!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+//        count_items_current = 2300;
+
 
         count_items_current = count_items_current > item_left_size ? item_left_size : count_items_current;
 
@@ -391,6 +451,7 @@ void sgd::train_random_preferences_gpu()
 
         std::cout << "--Items size: " << count_items_current << std::endl;
 
+        // load users by parts
         while (cur_user_start < _count_users) {
             start = get_wall_time();
 
@@ -398,6 +459,10 @@ void sgd::train_random_preferences_gpu()
 
             cudaMemGetInfo(&cuda_free_mem, &cuda_total_mem);
             int count_users_current = (int) ((cuda_free_mem * 0.95) / ((_count_features + 5) * 4));
+
+            //!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+//            count_users_current = 5800000;
+
             count_users_current = count_users_current > user_left_size ? user_left_size : count_users_current;
 
             thrust::device_vector<float> d_features_users(_features_users.begin() + cur_user_start * _count_features,
@@ -422,63 +487,27 @@ void sgd::train_random_preferences_gpu()
             if (cudaSuccess != cudaPeekAtLastError())
                 std::cout << "!WARN - Cuda thrust error: " << cudaGetErrorString(cudaGetLastError()) << std::endl;
 
-            thrust::device_vector<unsigned int> random_data(3 * count_users_current);
-            std::vector<unsigned int> random_data_host(3 * count_users_current);
 
-            int batch_iter_count = 1;
             for (int i = 0; i < batch_iter_count; i++) {
                 start = get_wall_time();
 
-                std::vector<int> is_positive_ratings(count_users_current);
-                std::vector<int> rand_user_items(count_users_current);
-                std::vector<int> rand_items(count_users_current);
+                std::vector<int> small_item_id(global_item_id.begin() + i * _count_users + cur_user_start,
+                                               global_item_id.begin() + i * _count_users + cur_user_start
+                                                   + count_users_current);
+                std::vector<float> small_preference(global_preference.begin() + i * _count_users + cur_user_start,
+                                                    global_preference.begin() + i * _count_users + cur_user_start
+                                                        + count_users_current);
 
-                curandGenerate(gen, thrust::raw_pointer_cast(&random_data.front()), 3 * count_users_current);
-                thrust::copy(random_data.begin(), random_data.end(), random_data_host.begin());
-                cudaDeviceSynchronize();
-
-#pragma omp parallel for num_threads(omp_get_max_threads())
-                for (int j = 0; j < count_users_current; j++) {
-                    is_positive_ratings[j] = random_data_host[j] % 10;
-                    rand_user_items[j] = random_data_host[j + 1] % _user_likes[cur_user_start + j].size();
-                    rand_items[j] = random_data_host[j + 2] % count_items_current;
-                }
-
-                /*for (int j = 0; j < count_users_current; j++) {
-                    is_positive_ratings[j] = fastrand() % 10;
-                    rand_user_items[j] = fastrand() % _user_likes[cur_user_start + j].size();
-                    rand_items[j] = fastrand() % count_items_current;
-                }*/
-
-                std::vector<int> small_item_id(count_users_current);
-                std::vector<float> small_preference(count_users_current);
-
+                // check if item loaded
 #pragma omp parallel for num_threads(omp_get_max_threads())
                 for (int j = 0; j < count_users_current; j++) {
                     int user = cur_user_start + j;
-                    if (is_positive_ratings[j] < 1) {
-                        int item_id = rand_user_items[j];
-                        int item = _user_likes[user][item_id];
-                        if (item >= cur_item_start && item < cur_item_start + count_items_current) {
-                            small_item_id[j] = item - cur_item_start;
-                        }
-                        else {
-                            small_item_id[j] = -1;
-                        }
-                        small_preference[j] = 1 + _sgd_alpha * _user_likes_weights[user][item_id];
+                    int item = global_item_id[i * _count_users + user]; // can be replaced with small_item_id[j]
+                    if (item >= cur_item_start && item < cur_item_start + count_items_current) {
+                        small_item_id[j] = item - cur_item_start;
                     }
                     else {
-                        int item = rand_items[j];
-                        small_item_id[j] = item;
-                        std::vector<int>::iterator
-                            it = std::find(_user_likes[user].begin(), _user_likes[user].end(), item + cur_item_start);
-                        if (it == _user_likes[user].end()) {
-                            small_preference[j] = 0;
-                        }
-                        else {
-                            int item_id = std::distance(_user_likes[user].begin(), it);
-                            small_preference[j] = 1 + _sgd_alpha * _user_likes_weights[user][item_id];
-                        }
+                        small_item_id[j] = -1;
                     }
                 }
                 thrust::device_vector<int> d_small_item_id(small_item_id);
