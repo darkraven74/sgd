@@ -132,7 +132,7 @@ void sgd::read_likes(std::istream &tuples_stream, int count_simples, int format)
 void sgd::generate_test_set()
 {
     int total_size = 0;
-    for (int idx = 0; idx < 10000;) {
+    for (int idx = 0; idx < 800;) {
         //for (int i = 0; i < _count_users; i++) {
         int i = rand() % _count_users;
         if (_user_likes[i].size() < 2) {
@@ -245,7 +245,6 @@ void sgd::calculate(int count_iterations, int positive_ratings, int negative_rat
 
 }
 
-
 void sgd::train_random_preferences_cpu()
 {
 
@@ -257,6 +256,13 @@ void sgd::train_random_preferences_gpu()
     size_t cuda_total_mem = 0;
 
     int batch_iter_count = 100;
+
+    std::vector<int> random_users;
+    for (int i = 0; i < _count_users; i++) {
+        random_users.push_back(i);
+    }
+    //std::random_shuffle(random_users.begin(), random_users.end());
+
 
     std::vector<int> global_item_id(_count_users * batch_iter_count);
     std::vector<float> global_preference(_count_users * batch_iter_count);
@@ -279,7 +285,8 @@ void sgd::train_random_preferences_gpu()
 
 
 #pragma omp parallel for num_threads(omp_get_max_threads())
-        for (int user = 0; user < _count_users; user++) {
+        for (int user_id = 0; user_id < _count_users; user_id++) {
+            int user = random_users[user_id];
             if (is_positive_ratings[user] < 1) {
                 int item_id = rand_user_items[user];
                 int item = _user_likes[user][item_id];
@@ -315,7 +322,7 @@ void sgd::train_random_preferences_gpu()
 
 
         //!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-        int  count_items_current = 2300;
+        int count_items_current = 10000000;
 
 
         count_items_current = count_items_current > item_left_size ? item_left_size : count_items_current;
@@ -340,21 +347,31 @@ void sgd::train_random_preferences_gpu()
 
 
             //!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-            int count_users_current = 5800000;
+            int count_users_current = 500;
 
             count_users_current = count_users_current > user_left_size ? user_left_size : count_users_current;
 
 
-            std::vector<float> h_features_users(_features_users.begin() + cur_user_start * _count_features,
-                                                _features_users.begin()
-                                                    + (cur_user_start + count_users_current)
-                                                        * _count_features);
+//            std::vector<float> h_features_users(_features_users.begin() + cur_user_start * _count_features,
+//                                                _features_users.begin()
+//                                                    + (cur_user_start + count_users_current)
+//                                                        * _count_features);
+
+            std::vector<float> h_features_users(count_users_current * _count_features);
+
+
+            for (int idx = 0; idx < count_users_current; idx++) {
+                int user_id = random_users[idx];
+                std::copy(_features_users.begin() + user_id * _count_features,
+                          _features_users.begin() + (user_id + 1) * _count_features,
+                          h_features_users.begin() + idx * _count_features);
+            }
+
 
             end = get_wall_time();
             transfers += (end - start);
 
             std::cout << "---Users size: " << count_users_current << std::endl;
-
 
 
             for (int i = 0; i < batch_iter_count; i++) {
@@ -370,8 +387,7 @@ void sgd::train_random_preferences_gpu()
                 // check if item loaded
 #pragma omp parallel for num_threads(omp_get_max_threads())
                 for (int j = 0; j < count_users_current; j++) {
-                    int user = cur_user_start + j;
-                    int item = global_item_id[i * _count_users + user]; // can be replaced with small_item_id[j]
+                    int item = small_item_id[j]; // can be replaced with small_item_id[j]
                     if (item >= cur_item_start && item < cur_item_start + count_items_current) {
                         small_item_id[j] = item - cur_item_start;
                     }
@@ -386,7 +402,7 @@ void sgd::train_random_preferences_gpu()
                 start = get_wall_time();
 
 
-#pragma omp parallel for num_threads(omp_get_max_threads())
+//#pragma omp parallel for num_threads(omp_get_max_threads())
                 for (int id = 0; id < small_preference.size(); id++) {
                     update_features(&small_item_id[0], &small_preference[0],
                                     &h_features_users[0], &h_features_items[0], id);
@@ -395,13 +411,19 @@ void sgd::train_random_preferences_gpu()
                 end = get_wall_time();
                 calc += (end - start);
 
-
             }
             start = get_wall_time();
 
 
-            std::copy(h_features_users.begin(), h_features_users.end(),
-                         _features_users.begin() + cur_user_start * _count_features);
+//            std::copy(h_features_users.begin(), h_features_users.end(),
+//                      _features_users.begin() + cur_user_start * _count_features);
+
+            for (int idx = 0; idx < count_users_current; idx++) {
+                int user_id = random_users[idx];
+                std::copy(h_features_users.begin() + idx * _count_features,
+                          h_features_users.begin() + (idx + 1) * _count_features,
+                          _features_users.begin() + user_id * _count_features);
+            }
 
             end = get_wall_time();
             transfers += (end - start);
@@ -414,7 +436,7 @@ void sgd::train_random_preferences_gpu()
 
 
         std::copy(h_features_items.begin(), h_features_items.end(),
-                     _features_items.begin() + cur_item_start * _count_features);
+                  _features_items.begin() + cur_item_start * _count_features);
 
 
         end = get_wall_time();
