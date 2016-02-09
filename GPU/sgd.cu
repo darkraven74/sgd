@@ -426,20 +426,22 @@ void sgd::train_random_preferences_gpu()
 void sgd::update_features(int *item_ids, float *preferences,
                           float *features_users, float *features_items, int user_id)
 {
-    float error = preferences[user_id] - get_prediction(user_id, item_ids[user_id], features_users, features_items);
+    if (item_ids[user_id] != -1) {
+        float error = preferences[user_id] - get_prediction(user_id, item_ids[user_id], features_users, features_items);
 
-    int user_mul_feat = user_id * _count_features;
-    int item_mul_feat = item_ids[user_id] * _count_features;
+        int user_mul_feat = user_id * _count_features;
+        int item_mul_feat = item_ids[user_id] * _count_features;
 
-    for (int i = 0; i < _count_features; i++) {
-        float user_feature = features_users[user_mul_feat + i];
-        float item_feature = features_items[item_mul_feat + i];
+        for (int i = 0; i < _count_features; i++) {
+            float user_feature = features_users[user_mul_feat + i];
+            float item_feature = features_items[item_mul_feat + i];
 
-        float delta_user_feature = error * item_feature - _sgd_lambda * user_feature;
-        float delta_item_feature = error * user_feature - _sgd_lambda * item_feature;
+            float delta_user_feature = error * item_feature - _sgd_lambda * user_feature;
+            float delta_item_feature = error * user_feature - _sgd_lambda * item_feature;
 
-        features_users[user_mul_feat + i] = user_feature + (_sgd_learning_rate * delta_user_feature);
-        features_items[item_mul_feat + i] = item_feature + (_sgd_learning_rate * delta_item_feature);
+            features_users[user_mul_feat + i] = user_feature + (_sgd_learning_rate * delta_user_feature);
+            features_items[item_mul_feat + i] = item_feature + (_sgd_learning_rate * delta_item_feature);
+        }
     }
 }
 
