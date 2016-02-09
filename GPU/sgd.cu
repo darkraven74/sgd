@@ -361,7 +361,7 @@ void sgd::train_random_preferences_gpu()
 
 
             for (int idx = 0; idx < count_users_current; idx++) {
-                int user_id = random_users[idx];
+                int user_id = random_users[cur_user_start + idx];
                 std::copy(_features_users.begin() + user_id * _count_features,
                           _features_users.begin() + (user_id + 1) * _count_features,
                           h_features_users.begin() + idx * _count_features);
@@ -419,7 +419,7 @@ void sgd::train_random_preferences_gpu()
 //                      _features_users.begin() + cur_user_start * _count_features);
 
             for (int idx = 0; idx < count_users_current; idx++) {
-                int user_id = random_users[idx];
+                int user_id = random_users[cur_user_start + idx];
                 std::copy(h_features_users.begin() + idx * _count_features,
                           h_features_users.begin() + (idx + 1) * _count_features,
                           _features_users.begin() + user_id * _count_features);
