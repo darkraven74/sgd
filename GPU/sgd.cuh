@@ -141,6 +141,8 @@ private:
     double transfers;
     double calc;
 
+    std::vector<int> random_users;
+
 
 };
 

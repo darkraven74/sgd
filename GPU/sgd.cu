@@ -180,6 +180,10 @@ void sgd::calculate(int count_iterations, int positive_ratings, int negative_rat
     fill_rnd(_features_users, _count_users);
     fill_rnd(_features_items, _count_items);
 
+    for (int i = 0; i < _count_users; i++) {
+        random_users.push_back(i);
+    }
+
     std::ofstream hr10("hr10.txt");
     std::ofstream learn_rate("learn_rate.txt");
 
@@ -257,11 +261,9 @@ void sgd::train_random_preferences_gpu()
 
     int batch_iter_count = 100;
 
-    std::vector<int> random_users;
-    for (int i = 0; i < _count_users; i++) {
-        random_users.push_back(i);
-    }
-    //std::random_shuffle(random_users.begin(), random_users.end());
+
+
+    std::random_shuffle(random_users.begin(), random_users.end());
 
 
     std::vector<int> global_item_id(_count_users * batch_iter_count);
