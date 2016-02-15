@@ -6,6 +6,7 @@
 #include <thrust/device_vector.h>
 #include <thrust/host_vector.h>
 #include <thrust/copy.h>
+#include <string.h>
 
 #define BLOCK_SIZE 4
 
@@ -47,6 +48,7 @@ sgd::sgd(std::istream &tuples_stream,
     _sgd_lambda(lambda),
     _sgd_alpha(alpha)
 {
+    cudaSetDevice(1);
     curandCreateGenerator(&gen, CURAND_RNG_PSEUDO_XORWOW);
     curandSetPseudoRandomGeneratorSeed(gen, 1234ULL);
 
@@ -57,7 +59,9 @@ sgd::sgd(std::istream &tuples_stream,
 
     read_likes(tuples_stream, count_samples, likes_format);
 
-    generate_test_set();
+//    generate_test_set();
+    read_test_set(std::string("split_active_users_test"));
+//    split_data(std::string("split_10M_sm"), 1000);
 
     _features_users.assign(_count_users * _count_features, 0);
     _features_items.assign(_count_items * _count_features, 0);
@@ -82,6 +86,7 @@ void sgd::read_likes(std::istream &tuples_stream, int count_simples, int format)
 
         if (_users_map.find(uid) == _users_map.end()) {
             _users_map[uid] = _count_users;
+            _users_back_map[_count_users] = uid;
             _count_users++;
             _user_likes.push_back(std::vector<int>());
             _user_likes_weights.push_back(std::vector<float>());
@@ -108,6 +113,7 @@ void sgd::read_likes(std::istream &tuples_stream, int count_simples, int format)
 
         if (_items_map.find(iid) == _items_map.end()) {
             _items_map[iid] = _count_items;
+            _items_back_map[_count_items] = iid;
             _item_likes.push_back(std::vector<int>());
             _item_likes_weights.push_back(std::vector<float>());
             _count_items++;
@@ -136,38 +142,55 @@ void sgd::read_likes(std::istream &tuples_stream, int count_simples, int format)
 
 void sgd::generate_test_set()
 {
-    int total_size = 0;
-    for (int idx = 0; idx < 10000;) {
-        //for (int i = 0; i < _count_users; i++) {
+    std::set<int> test_users;
+    for (int idx = 0; idx < 1000;) {
         int i = rand() % _count_users;
-        if (_user_likes[i].size() < 2) {
+
+        if (_user_likes[i].size() < 2 || test_users.count(i)) {
             continue;
         }
         idx++;
-        total_size += _user_likes[i].size();
-        int size = _user_likes[i].size();
-        for (int j = 0; j < size / 2;) {
-            int id = rand() % _user_likes[i].size();
+        test_users.insert(i);
+        int id = rand() % _user_likes[i].size();
 
-            /*if (_user_likes_weights_temp[i][id] < 4) {
-                continue;
-            }*/
-            test_set.push_back(std::make_pair(i, _user_likes[i][id]));
+        test_set.push_back(std::make_pair(i, _user_likes[i][id]));
 
-            for (unsigned int k = 0; k < _item_likes[_user_likes[i][id]].size(); k++) {
-                if (_item_likes[_user_likes[i][id]][k] == i) {
-                    _item_likes[_user_likes[i][id]].erase(_item_likes[_user_likes[i][id]].begin() + k);
-                    _item_likes_weights[_user_likes[i][id]]
-                        .erase(_item_likes_weights[_user_likes[i][id]].begin() + k);
-                }
+        for (unsigned int k = 0; k < _item_likes[_user_likes[i][id]].size(); k++) {
+            if (_item_likes[_user_likes[i][id]][k] == i) {
+                _item_likes[_user_likes[i][id]].erase(_item_likes[_user_likes[i][id]].begin() + k);
+                _item_likes_weights[_user_likes[i][id]]
+                    .erase(_item_likes_weights[_user_likes[i][id]].begin() + k);
             }
-
-            _user_likes[i].erase(_user_likes[i].begin() + id);
-            _user_likes_weights[i].erase(_user_likes_weights[i].begin() + id);
-            _user_likes_weights_temp[i].erase(_user_likes_weights_temp[i].begin() + id);
-            break;
         }
+
+        _user_likes[i].erase(_user_likes[i].begin() + id);
+        _user_likes_weights[i].erase(_user_likes_weights[i].begin() + id);
+        _user_likes_weights_temp[i].erase(_user_likes_weights_temp[i].begin() + id);
     }
+}
+
+void sgd::read_test_set(std::string file_name)
+{
+    std::ifstream ifs(file_name.c_str());
+    std::istream &tuples_stream(ifs);
+    std::string line;
+    char const tab_delim = '\t';
+
+    while (getline(tuples_stream, line)) {
+        std::istringstream line_stream(line);
+        std::string value;
+        getline(line_stream, value, tab_delim);
+        unsigned long uid = atol(value.c_str());
+
+        int user = _users_map[uid];
+
+        getline(line_stream, value, tab_delim);
+        unsigned long iid = atol(value.c_str());
+        int item = _items_map[iid];
+
+        test_set.push_back(std::make_pair(user, item));
+    }
+
 }
 
 void sgd::fill_rnd(features_vector &in_v, int in_size)
@@ -209,18 +232,6 @@ void sgd::calculate(int count_iterations, int positive_ratings, int negative_rat
         else {
             train_random_preferences_cpu();
         }
-
-        /*std::cout << "users fea: " << std::endl;
-        for (int j = 0; j < 7; j++) {
-            std::cout << _features_users[j] << " ";
-        }
-        std::cout << std::endl;
-
-        std::cout << "items fea: " << std::endl;
-        for (int j = 0; j < 7; j++) {
-            std::cout << _features_items[j] << " ";
-        }
-        std::cout << std::endl;*/
 
         cudaDeviceSynchronize();
         double end = get_wall_time();
@@ -429,7 +440,6 @@ void sgd::train_random_preferences_gpu()
         int count_items_current = (int) ((cuda_free_mem * 0.75) / (_count_features * 4));
 
 
-        //!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 //        count_items_current = 2300;
 
 
@@ -460,7 +470,6 @@ void sgd::train_random_preferences_gpu()
             cudaMemGetInfo(&cuda_free_mem, &cuda_total_mem);
             int count_users_current = (int) ((cuda_free_mem * 0.95) / ((_count_features + 5) * 4));
 
-            //!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 //            count_users_current = 5800000;
 
             count_users_current = count_users_current > user_left_size ? user_left_size : count_users_current;
@@ -697,4 +706,54 @@ void sgd::serialize_matrix(std::ostream &out, const float *mat, int crow, int cc
         }
         out << std::endl;
     }
+}
+
+void sgd::split_data(std::string file_name, int test_size)
+{
+    std::string test_file_name(file_name);
+    std::string train_file_name(file_name);
+
+    std::ofstream test_stream(test_file_name.append("_test").c_str());
+    std::ofstream train_stream(train_file_name.append("_train").c_str());
+    int idx = 0;
+    std::set<int> test_users;
+    while (idx < test_size) {
+        int i = rand() % _count_users;
+        if (_user_likes[i].size() < 2 || test_users.count(i)) {
+            continue;
+        }
+        idx++;
+        test_users.insert(i);
+        int id = rand() % _user_likes[i].size();
+
+
+        test_set.push_back(std::make_pair(i, _user_likes[i][id]));
+
+        for (unsigned int k = 0; k < _item_likes[_user_likes[i][id]].size(); k++) {
+            if (_item_likes[_user_likes[i][id]][k] == i) {
+                _item_likes[_user_likes[i][id]].erase(_item_likes[_user_likes[i][id]].begin() + k);
+                _item_likes_weights[_user_likes[i][id]]
+                    .erase(_item_likes_weights[_user_likes[i][id]].begin() + k);
+            }
+        }
+
+        _user_likes[i].erase(_user_likes[i].begin() + id);
+        _user_likes_weights[i].erase(_user_likes_weights[i].begin() + id);
+        _user_likes_weights_temp[i].erase(_user_likes_weights_temp[i].begin() + id);
+    }
+
+    for (int i = 0; i < test_set.size(); i++) {
+        int user = test_set[i].first;
+        int item = test_set[i].second;
+        test_stream << _users_back_map[user] << '\t' << _items_back_map[item] << std::endl;
+    }
+
+    for (int i = 0; i < _count_users; i++) {
+        for (int j = 0; j < _user_likes[i].size(); j++) {
+            train_stream << _users_back_map[i] << '\t' << _items_back_map[_user_likes[i][j]] << std::endl;
+        }
+    }
+
+    test_stream.close();
+    train_stream.close();
 }

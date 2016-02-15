@@ -75,6 +75,10 @@ public:
     void serialize_users_map(std::ostream &out);
     void serialize_items_map(std::ostream &out);
 
+
+    void split_data(std::string out, int test_size);
+    void read_test_set(std::string file_name);
+
 protected:
     ///
     /// Read likes from stream
@@ -94,16 +98,12 @@ protected:
 
     void train_random_preferences_gpu();
 
-    void update_features_avg(int user, int item, float preference);
-
     void update_features(int *item_ids, float *preferences,
                          float *features_users, float *features_items, int idx);
 
     float get_prediction(int user, int item, float *features_users, float *features_items);
 
     void generate_test_set();
-
-    void getHRFromDato();
 
 private:
     ///
@@ -121,6 +121,10 @@ private:
     ///
     std::map<unsigned long, int> _users_map;
     std::map<unsigned long, int> _items_map;
+
+    std::map<int, unsigned long> _users_back_map;
+    std::map<int, unsigned long> _items_back_map;
+
     likes_vector _user_likes;
     likes_weights_vector _user_likes_weights;
     likes_vector _item_likes;
