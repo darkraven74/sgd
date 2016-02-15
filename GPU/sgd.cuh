@@ -20,8 +20,6 @@ public:
     typedef std::vector<float> features_vector;
     typedef std::vector<std::vector<int> > likes_vector;
     typedef std::vector<std::vector<float> > likes_weights_vector;
-    typedef std::vector<int> likes_vector_item;
-    typedef std::vector<float> likes_weights_vector_item;
     ///
     /// Ctor
     /// Inputs are:
@@ -140,8 +138,6 @@ private:
 
     std::vector<std::pair<int, int> > test_set;
     likes_weights_vector _user_likes_weights_temp;
-
-    std::vector<std::pair<int, int> > prefs;
 
     double transfers;
     double calc;

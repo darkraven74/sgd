@@ -309,12 +309,6 @@ void sgd::train_random_preferences_cpu()
         std::vector<int> rand_user_items(_count_users);
         std::vector<int> rand_items(_count_users);
 
-        /*for (int j = 0; j < _count_users; j++) {
-            is_positive_ratings[j] = fastrand() % 10;
-            rand_user_items[j] = fastrand() % _user_likes[j].size();
-            rand_items[j] = fastrand() % _count_items;
-        }*/
-
         curandGenerate(gen, thrust::raw_pointer_cast(&random_data.front()), 3 * _count_users);
         thrust::copy(random_data.begin(), random_data.end(), random_data_host.begin());
         cudaDeviceSynchronize();
@@ -449,10 +443,6 @@ void sgd::train_random_preferences_gpu()
                                                       _features_items.begin()
                                                           + (cur_item_start + count_items_current) * _count_features);
 
-        std::vector<float> h_features_items(_features_items.begin() + cur_item_start * _count_features,
-                                            _features_items.begin()
-                                                + (cur_item_start + count_items_current) * _count_features);
-
         int cur_user_start = 0;
 
         cudaDeviceSynchronize();
@@ -478,11 +468,6 @@ void sgd::train_random_preferences_gpu()
                                                           _features_users.begin()
                                                               + (cur_user_start + count_users_current)
                                                                   * _count_features);
-
-            std::vector<float> h_features_users(_features_users.begin() + cur_user_start * _count_features,
-                                                _features_users.begin()
-                                                    + (cur_user_start + count_users_current)
-                                                        * _count_features);
 
             dim3 block_2d(BLOCK_SIZE, 64);
             dim3 grid_2d(1 + count_users_current / BLOCK_SIZE, 1 + _count_features / 64);
@@ -537,13 +522,6 @@ void sgd::train_random_preferences_gpu()
                         small_preference.size(), _count_features, _sgd_lambda, _sgd_learning_rate);
 
 
-/*#pragma omp parallel for num_threads(omp_get_max_threads())
-                for (int id = 0; id < small_preference.size(); id++) {
-                    update_features(&small_item_id[0], &small_preference[0],
-                                    &h_features_users[0], &h_features_items[0], id);
-                }*/
-
-
                 cudaDeviceSynchronize();
                 end = get_wall_time();
                 calc += (end - start);
@@ -556,9 +534,6 @@ void sgd::train_random_preferences_gpu()
 
             thrust::copy(d_features_users.begin(), d_features_users.end(),
                          _features_users.begin() + cur_user_start * _count_features);
-
-//            std::copy(h_features_users.begin(), h_features_users.end(),
-//                         _features_users.begin() + cur_user_start * _count_features);
 
             cudaDeviceSynchronize();
             end = get_wall_time();
@@ -574,10 +549,6 @@ void sgd::train_random_preferences_gpu()
 
         thrust::copy(d_features_items.begin(), d_features_items.end(),
                      _features_items.begin() + cur_item_start * _count_features);
-
-//        std::copy(h_features_items.begin(), h_features_items.end(),
-//                     _features_items.begin() + cur_item_start * _count_features);
-
 
         cudaDeviceSynchronize();
         end = get_wall_time();
